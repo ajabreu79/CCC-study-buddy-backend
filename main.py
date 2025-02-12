@@ -7,11 +7,8 @@ import time
 
 from openai import OpenAI
 from anthropic import Anthropic
-from src.Chat import ChatSingleCall, ChatSingleCallModel, ChatSingleCallResponse
 from src.ChatStream import ChatStream, ChatStreamModel
 from src.DynamicAuth import DynamicAuth
-from src.TtsStream import TtsStream
-from src.SttApiKey import SttApiKey, SttApiKeyResponse
 
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
@@ -36,6 +33,7 @@ origins = [
     "http://localhost:5173",
     "http://localhost:5172",
     "http://localhost:5174",
+    "http://localhost:3000",
     "http://127.0.0.1:5173",
     "https://conver-flow-web.vercel.app",
     "https://progressive-xlab.vercel.app",
@@ -55,20 +53,6 @@ app.add_middleware(
 )
 
 
-@app.post(f"{DEV_PREFIX}/chat")
-@app.post(f"{PROD_PREFIX}/chat")
-async def chat(chat_single_call_model: ChatSingleCallModel):
-    """
-    ENDPOINT: /dev/chat, /prod/chat
-    :param chat_single_call_model: 
-    """
-    auth = DynamicAuth()
-    if not auth.verify_auth_code(chat_single_call_model.dynamic_auth_code):
-        return ChatSingleCallResponse(status="fail", messages=[], thread_id="")
-    chat_instance = ChatSingleCall(openai_client)
-    return await chat_instance.send_chat(chat_single_call_model)
-
-
 @app.post(f"{DEV_PREFIX}/stream_chat")
 @app.post(f"{PROD_PREFIX}/stream_chat")
 async def stream_chat(chat_stream_model: ChatStreamModel):
@@ -77,8 +61,6 @@ async def stream_chat(chat_stream_model: ChatStreamModel):
     :param chat_stream_model:
     """
     auth = DynamicAuth()
-    if not auth.verify_auth_code(chat_stream_model.dynamic_auth_code):
-        return ChatSingleCallResponse(status="fail", messages=[], thread_id="")
     chat_instance = ChatStream(chat_stream_model.provider, openai_client, anthropic_client)
     return chat_instance.stream_chat(chat_stream_model)
 
@@ -92,42 +74,6 @@ def delete_file_after_delay(file_path: str, delay: float):
     time.sleep(delay)
     if os.path.isfile(file_path):
         os.remove(file_path)
-
-
-@app.get(f"{DEV_PREFIX}/get_tts_file")
-@app.get(f"{PROD_PREFIX}/get_tts_file")
-async def get_tts_file(tts_session_id: str, chunk_id: str, background_tasks: BackgroundTasks):
-    """
-    ENDPOINT: /dev/get_tts_file, /prod/get_tts_file
-    serves the TTS audio file for the specified session id and chunk id.
-    :param tts_session_id:
-    :param chunk_id:
-    :param background_tasks:
-    :return:
-    """
-    file_location = f"{TtsStream.TTS_AUDIO_CACHE_FOLDER}/{tts_session_id}_{chunk_id}.mp3"
-    if os.path.isfile(file_location):
-        # Add the delete_file_after_delay function as a background task
-        background_tasks.add_task(delete_file_after_delay, file_location, 60)  # 60 seconds delay
-        return FileResponse(path=file_location, media_type="audio/mpeg")
-    else:
-        raise HTTPException(status_code=404, detail="File not found")
-
-
-@app.get(f"{DEV_PREFIX}/get_temp_stt_auth_code")
-@app.get(f"{PROD_PREFIX}/get_temp_stt_auth_code")
-def get_temp_stt_auth_code(dynamic_auth_code: str):
-    """
-    ENDPOINT: /user/get_temp_stt_auth_code
-    Generates a temporary STT auth code for the user.
-    :return:
-    """
-    auth = DynamicAuth()
-    if not auth.verify_auth_code(dynamic_auth_code):
-        return SttApiKeyResponse(status="fail", error_message="Invalid auth code", key="")
-    stt_key_instance = SttApiKey()
-    api_key, _ = stt_key_instance.generate_key()
-    return SttApiKeyResponse(status="success", error_message=None, key=api_key)
 
 
 @app.get("/dev/")
