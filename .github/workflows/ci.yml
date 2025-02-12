@@ -1,0 +1,51 @@
+name: build_publish_dev
+
+# Trigger on any push except to 'master' or 'main'
+on:
+  push:
+    branches:
+      - master
+      - main
+
+# Define environment variables used throughout the workflow
+env:
+  REGISTRY: ghcr.io
+  # IMAGE_NAME will be something like "repository_owner/conver-flow:dev".
+  # It will be converted to lowercase before use.
+  IMAGE_NAME: ${{ github.repository_owner }}/conver-flow:dev
+  SEC_FILE_NAME: edcwsxqaz
+
+jobs:
+  publish:
+    name: Publish Docker Image (Dev)
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Convert IMAGE_NAME to lowercase.
+      # Some container registries require image names in lowercase.
+      - id: string
+        uses: ASzc/change-string-case-action@v5
+        with:
+          string: ${{ env.IMAGE_NAME }}
+
+      # Step 2: Update the IMAGE_NAME environment variable with the lowercase output.
+      - id: updateenv
+        run: echo "IMAGE_NAME=${{ steps.string.outputs.lowercase }}" >> $GITHUB_ENV
+
+      # Step 3: Check out the repository's code so the Docker build has access to your files.
+      - uses: actions/checkout@v4
+
+      # Step 4: Log in to GitHub Container Registry (GHCR) using a Personal Access Token (PAT).
+      # Ensure that a secret named 'PAT' (with appropriate scopes) is added to your repository.
+      - name: Login to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 5: Build the Docker image using your Dockerfile and push it to GHCR.
+      - name: Build and Publish Docker Image
+        run: |
+          docker build . --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
