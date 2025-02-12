@@ -10,6 +10,8 @@ from anthropic import Anthropic
 from src.ChatStream import ChatStream, ChatStreamModel
 from src.DynamicAuth import DynamicAuth
 
+from middleware import auth_middleware
+
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
 
@@ -42,6 +44,13 @@ origins = [
 ]
 
 regex_origins = "https://.*jerryyang666s-projects\.vercel\.app"
+
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    response = await auth_middleware(request, call_next)
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
