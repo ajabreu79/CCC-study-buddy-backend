@@ -1,7 +1,7 @@
 name: build_publish_dev
 
 on:
-  # Run on pushes to all branches EXCEPT master/main
+  # Example: run on all branches EXCEPT master/main
   push:
     branches-ignore:
       - master
@@ -18,28 +18,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Convert IMAGE_NAME to lowercase.
+      # 1) Convert IMAGE_NAME to lowercase (some registries require it).
       - id: string
         uses: ASzc/change-string-case-action@v5
         with:
           string: ${{ env.IMAGE_NAME }}
 
-      # 2) Update the IMAGE_NAME variable to the lowercased version.
+      # 2) Update the IMAGE_NAME variable with the lowercase output.
       - id: updateenv
         run: echo "IMAGE_NAME=${{ steps.string.outputs.lowercase }}" >> $GITHUB_ENV
 
-      # 3) Check out the code to build the Docker image.
+      # 3) Check out the code.
       - uses: actions/checkout@v4
 
-      # 4) Log in to GHCR (using the secrets.PAT).
+      # 4) Log in to GHCR (using GITHUB_TOKEN or a personal access token).
       - name: Login to GHCR
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5) Build & push the Docker image to GHCR using the newly updated IMAGE_NAME.
+      # 5) Build & Push to GHCR.
       - name: Build and Push Docker Image
         run: |
           docker build . --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -47,32 +47,47 @@ jobs:
 
   deploy:
     name: Deploy (Dev)
+    # Run only after the publish job completes successfully.
     needs: publish
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Install SSH key so we can connect to remote server.
       - name: Install SSH Keys
         run: |
+          # Create the .ssh directory if it doesn't exist.
           mkdir -p ~/.ssh
+
+          # Restrict permissions.
           install -m 600 -D /dev/null ~/.ssh/id_rsa
+
+          # Write the private key from your secret.
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+
+          # Add the remote SSH host to known hosts.
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
-          # Optional: Put a secret file on remote server
+          # (Optional) Place your custom secret on the remote server, if needed.
+          # E.g., create SEC_FILE_NAME file containing ${{ secrets.SEC }}:
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "cd ${{ secrets.WORK_DIR }} && echo '${{ secrets.SEC }}' > ${{ env.SEC_FILE_NAME }} && exit"
 
+      # 2) Log into GHCR on remote, pull the new image, and restart the container.
       - name: Pull New Image & Run
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
             echo '${{ secrets.PAT }}' | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
             cd ${{ secrets.WORK_DIR }} && \
+            # Stop + remove the current container if it’s running.
             docker stop conver-flow-server-dev || true && \
             docker rm conver-flow-server-dev || true && \
+            # Pull the new dev image
             docker pull ghcr.io/${{ env.IMAGE_NAME }} && \
+            # Example run command (adjust any environment vars/ports/etc.)
             docker run -d --name conver-flow-server-dev -p 3000:3000 ghcr.io/${{ env.IMAGE_NAME }} && \
             exit \
           "
 
+      # 3) (Optional) Clean up secret file if you actually wrote one in the prior step.
       - name: Clean up Remote Secret (Optional)
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
@@ -81,5 +96,6 @@ jobs:
             exit \
           "
 
+      # 4) Clean up local SSH keys on the runner.
       - name: Cleanup
         run: rm -rf ~/.ssh
