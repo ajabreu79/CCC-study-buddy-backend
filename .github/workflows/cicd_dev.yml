@@ -1,7 +1,7 @@
 name: build_publish_dev
 
 on:
-  # Example: run on all branches EXCEPT master/main
+  # Run on pushes to all branches EXCEPT master/main
   push:
     branches-ignore:
       - master
@@ -28,10 +28,10 @@ jobs:
       - id: updateenv
         run: echo "IMAGE_NAME=${{ steps.string.outputs.lowercase }}" >> $GITHUB_ENV
 
-      # 3) Check out the code.
+      # 3) Check out the code so Docker can build it.
       - uses: actions/checkout@v4
 
-      # 4) Log in to GHCR.
+      # 4) Log in to GHCR using your personal access token (PAT).
       - name: Login to GHCR
         uses: docker/login-action@v2
         with:
@@ -39,7 +39,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.PAT }}
 
-      # 5) Build & Push to GHCR.
+      # 5) Build and push the Docker image.
       - name: Build and Push Docker Image
         run: |
           docker build . --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -47,12 +47,11 @@ jobs:
 
   deploy:
     name: Deploy (Dev)
-    # Run only after the publish job completes successfully.
     needs: publish
     runs-on: ubuntu-latest
 
     steps:
-      # 1) Install SSH key so we can connect to remote server.
+      # 1) Install SSH keys (so we can connect to remote server via ssh).
       - name: Install SSH Keys
         run: |
           mkdir -p ~/.ssh
@@ -60,6 +59,7 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
+          # (Optional) create the working directory and place a secret file there
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
             mkdir -p ${{ secrets.WORK_DIR }} && \
             cd ${{ secrets.WORK_DIR }} && \
@@ -67,7 +67,7 @@ jobs:
             exit
           "
 
-      # 2) Log into GHCR on remote, pull the new image, and restart the container.
+      # 2) Log into GHCR on the remote server, pull the new image, and run (with restart=always).
       - name: Pull New Image & Run
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
@@ -78,13 +78,17 @@ jobs:
             docker rm conver-flow-server-dev || true && \
             # Pull the new dev image
             docker pull ghcr.io/${{ env.IMAGE_NAME }} && \
-            # Example run command (adjust any environment vars/ports/etc.)
-            docker run -d --name conver-flow-server-dev -p 3000:3000 ghcr.io/${{ env.IMAGE_NAME }} && \
-            docker start conver-flow-server-dev && \
+            # Run container in detached mode on host port 3000, container port 8000
+            # (change to -p 3000:3000 if the container actually listens on 3000)
+            docker run -d \
+              --restart=always \
+              --name conver-flow-server-dev \
+              -p 3000:8000 \
+              ghcr.io/${{ env.IMAGE_NAME }} && \
             exit \
           "
 
-      # 3) (Optional) Clean up secret file if you actually wrote one in the prior step.
+      # 3) (Optional) Remove that secret file from the remote server.
       - name: Clean up Remote Secret (Optional)
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
@@ -93,6 +97,6 @@ jobs:
             exit \
           "
 
-      # 4) Clean up local SSH keys on the runner.
+      # 4) Clean up local SSH keys on GitHub runner.
       - name: Cleanup
         run: rm -rf ~/.ssh
