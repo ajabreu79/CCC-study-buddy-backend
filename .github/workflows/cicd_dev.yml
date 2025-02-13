@@ -80,6 +80,7 @@ jobs:
             docker pull ghcr.io/${{ env.IMAGE_NAME }} && \
             # Example run command (adjust any environment vars/ports/etc.)
             docker run -d --name conver-flow-server-dev -p 3000:3000 ghcr.io/${{ env.IMAGE_NAME }} && \
+            docker start conver-flow-server-dev && \
             exit \
           "
 
