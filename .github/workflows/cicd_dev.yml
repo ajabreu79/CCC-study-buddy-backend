@@ -1,0 +1,85 @@
+name: build_publish_dev
+
+on:
+  # Run on pushes to all branches EXCEPT master/main
+  push:
+    branches-ignore:
+      - master
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/conver-flow:dev
+  SEC_FILE_NAME: edcwsxqaz
+
+jobs:
+  publish:
+    name: Publish Docker Image (Dev)
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Convert IMAGE_NAME to lowercase.
+      - id: string
+        uses: ASzc/change-string-case-action@v5
+        with:
+          string: ${{ env.IMAGE_NAME }}
+
+      # 2) Update the IMAGE_NAME variable to the lowercased version.
+      - id: updateenv
+        run: echo "IMAGE_NAME=${{ steps.string.outputs.lowercase }}" >> $GITHUB_ENV
+
+      # 3) Check out the code to build the Docker image.
+      - uses: actions/checkout@v4
+
+      # 4) Log in to GHCR (using the secrets.PAT).
+      - name: Login to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.PAT }}
+
+      # 5) Build & push the Docker image to GHCR using the newly updated IMAGE_NAME.
+      - name: Build and Push Docker Image
+        run: |
+          docker build . --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+  deploy:
+    name: Deploy (Dev)
+    needs: publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          install -m 600 -D /dev/null ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+          # Optional: Put a secret file on remote server
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "cd ${{ secrets.WORK_DIR }} && echo '${{ secrets.SEC }}' > ${{ env.SEC_FILE_NAME }} && exit"
+
+      - name: Pull New Image & Run
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
+            echo '${{ secrets.PAT }}' | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin && \
+            cd ${{ secrets.WORK_DIR }} && \
+            docker stop conver-flow-server-dev || true && \
+            docker rm conver-flow-server-dev || true && \
+            docker pull ghcr.io/${{ env.IMAGE_NAME }} && \
+            docker run -d --name conver-flow-server-dev -p 3000:3000 ghcr.io/${{ env.IMAGE_NAME }} && \
+            exit \
+          "
+
+      - name: Clean up Remote Secret (Optional)
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} " \
+            cd ${{ secrets.WORK_DIR }} && \
+            rm -f ${{ env.SEC_FILE_NAME }} && \
+            exit \
+          "
+
+      - name: Cleanup
+        run: rm -rf ~/.ssh
