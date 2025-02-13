@@ -55,21 +55,17 @@ jobs:
       # 1) Install SSH key so we can connect to remote server.
       - name: Install SSH Keys
         run: |
-          # Create the .ssh directory if it doesn't exist.
           mkdir -p ~/.ssh
-
-          # Restrict permissions.
           install -m 600 -D /dev/null ~/.ssh/id_rsa
-
-          # Write the private key from your secret.
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-
-          # Add the remote SSH host to known hosts.
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
-          # (Optional) Place your custom secret on the remote server, if needed.
-          # E.g., create SEC_FILE_NAME file containing ${{ secrets.SEC }}:
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "cd ${{ secrets.WORK_DIR }} && echo '${{ secrets.SEC }}' > ${{ env.SEC_FILE_NAME }} && exit"
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
+            mkdir -p ${{ secrets.WORK_DIR }} && \
+            cd ${{ secrets.WORK_DIR }} && \
+            echo '${{ secrets.SEC }}' > ${{ env.SEC_FILE_NAME }} && \
+            exit
+          "
 
       # 2) Log into GHCR on remote, pull the new image, and restart the container.
       - name: Pull New Image & Run
