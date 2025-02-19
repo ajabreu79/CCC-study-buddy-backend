@@ -1,19 +1,19 @@
-name: cicd_dev
+name: cicd_prod
 
 on:
   push:
-    branches-ignore:
+    branches:
       - master
       - main
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/conver-flow:dev
+  IMAGE_NAME: ${{ github.repository_owner }}/conver-flow:prod
   SEC_FILE_NAME: edcwsxqaz
 
 jobs:
   publish:
-    name: Publish Docker Image (Dev)
+    name: Publish Docker Image (Prod)
     runs-on: ubuntu-latest
 
     steps:
@@ -39,7 +39,7 @@ jobs:
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
   deploy:
-    name: Deploy Image (Dev)
+    name: Deploy Image (Prod)
     needs: publish
     runs-on: ubuntu-latest
 
@@ -62,10 +62,10 @@ jobs:
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "echo '${{ secrets.PAT }}' | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin"
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "\
             cd ${{ secrets.WORK_DIR }} && \
-            docker stop conver-flow-server-dev || true && \
-            docker rm conver-flow-server-dev || true && \
-            docker compose pull conver-flow-server-dev && \
-            docker compose up -d conver-flow-server-dev"
+            docker stop conver-flow-server-prod || true && \
+            docker rm conver-flow-server-prod || true && \
+            docker compose pull conver-flow-server-prod && \
+            docker compose up -d conver-flow-server-prod"
 
       - name: Clean Up Remote Secret
         run: |
