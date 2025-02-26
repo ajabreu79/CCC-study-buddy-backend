@@ -3,20 +3,21 @@ from fastapi import Request, HTTPException
 import jwt
 import os
 
+
 async def auth_middleware(request: Request, call_next):
     start_time = time.perf_counter()
 
     # List of endpoints that do not require authentication
     unauthenticated_endpoints = [
-        "/", 
-        "/dev/docs", 
-        "/prod/docs", 
-        "/dev/signup", 
-        "/prod/signup", 
-        "/dev/signin", 
-        "/prod/signin", 
-        "/dev/openapi.json", 
-        "/prod/openapi.json"
+        "/",
+        "/dev/docs",
+        "/prod/docs",
+        "/dev/user/signup",
+        "/prod/user/signup",
+        "/dev/user/signin",
+        "/prod/user/signin",
+        "/dev/openapi.json",
+        "/prod/openapi.json",
     ]
 
     # Check if the request path is in the list of unauthenticated endpoints
@@ -32,7 +33,9 @@ async def auth_middleware(request: Request, call_next):
         token = auth_header.split(" ")[1]
         try:
             # Decode JWT token
-            payload = jwt.decode(token, os.getenv("JWT_SECRET_KEY"), algorithms=["HS256"])
+            payload = jwt.decode(
+                token, os.getenv("JWT_SECRET_KEY"), algorithms=["HS256"]
+            )
             request.state.user = payload
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token has expired")
