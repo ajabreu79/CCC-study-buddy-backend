@@ -172,3 +172,10 @@ cython_debug/
 
 # Firebase service account file
 firebase-service-account-key.json
+
+# macOS
+.DS_Store
+
+# JetBrains
+.idea/
+

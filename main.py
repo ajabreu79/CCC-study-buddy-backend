@@ -27,11 +27,23 @@ from src.DynamicAuth import DynamicAuth
 # Middleware import
 from middleware import auth_middleware
 
+import firebase_admin
+from firebase_admin import credentials, firestore
+import json
+
+
+import jwt
+from pydantic import BaseModel, EmailStr, Field
+
+from enum import Enum
+from typing import Optional
+
 # import routes
 from src.UserRoutes import router as user_router
 
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
+
 
 # try loading from .env file (only when running locally)
 try:
@@ -56,7 +68,9 @@ firebase_config = {
 # Load Firebase service account key from environment variable
 firebase_service_account_key_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY_PATH")
 if not firebase_service_account_key_path:
-    raise ValueError("FIREBASE_SERVICE_ACCOUNT_KEY_PATH environment variable is not set")
+    raise ValueError(
+        "FIREBASE_SERVICE_ACCOUNT_KEY_PATH environment variable is not set"
+    )
 
 with open(firebase_service_account_key_path) as f:
     firebase_config = json.load(f)
@@ -145,6 +159,135 @@ def read_root(request: Request):
         return {"Hello": "World", "request": str(request.url.path)}
     else:
         return {"Servers": "Hello-World-" + abc, "request": str(request.url.path)}
+
+
+class UserFilter(str, Enum):
+    ALL = "all"
+    DELETED = "deleted"
+    ACTIVE = "active"
+
+
+@app.get(f"{DEV_PREFIX}/users")
+@app.get(f"{PROD_PREFIX}/users")
+def list_users(filter_type: Optional[UserFilter] = UserFilter.ALL):
+    if filter_type == UserFilter.DELETED:
+        # Get only deleted users
+        users_ref = db.collection("users").where("deleted", "!=", None).stream()
+        users = [
+            {
+                "first_name": user.to_dict()["first_name"],
+                "last_name": user.to_dict()["last_name"],
+                "email": user.to_dict()["email"],
+                "access_level": user.to_dict()["access_level"],
+            }
+            for user in users_ref
+        ]
+        return users
+
+    elif filter_type == UserFilter.ACTIVE:
+        # Get only non-deleted users
+        users_ref = db.collection("users").where("deleted", "==", None).stream()
+        users = [
+            {
+                "first_name": user.to_dict()["first_name"],
+                "last_name": user.to_dict()["last_name"],
+                "email": user.to_dict()["email"],
+                "access_level": user.to_dict()["access_level"],
+            }
+            for user in users_ref
+        ]
+        return users
+
+    else:  # UserFilter.ALL
+        # Get both deleted and non-deleted users
+        deleted_users_ref = db.collection("users").where("deleted", "!=", None).stream()
+        deleted_users = [
+            {
+                "first_name": user.to_dict()["first_name"],
+                "last_name": user.to_dict()["last_name"],
+                "email": user.to_dict()["email"],
+                "access_level": user.to_dict()["access_level"],
+            }
+            for user in deleted_users_ref
+        ]
+
+        non_deleted_users_ref = (
+            db.collection("users").where("deleted", "==", None).stream()
+        )
+        non_deleted_users = [
+            {
+                "first_name": user.to_dict()["first_name"],
+                "last_name": user.to_dict()["last_name"],
+                "email": user.to_dict()["email"],
+                "access_level": user.to_dict()["access_level"],
+            }
+            for user in non_deleted_users_ref
+        ]
+
+        return deleted_users + non_deleted_users
+
+
+class SetAccessLevelModel(BaseModel):
+    new_access_level: int = Field(..., ge=0, le=9)
+    email: EmailStr
+
+
+@app.post(f"{DEV_PREFIX}/set_access_level")
+@app.post(f"{PROD_PREFIX}/set_access_level")
+def set_access_level(request: Request, payload: SetAccessLevelModel):
+    """
+    Allows modification of a user's access level.
+    - The requesting user must have a higher or equal access level.
+    - Users can be upgraded up to the requester's level but not beyond.
+    """
+
+    # Get the access level of user requesting change
+
+    try:
+        decoded_token = request.state.user
+        requester_access_level = decoded_token.get("access_level", 0)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Get the access level of user being changed
+
+    user_ref = db.collection("users").where("email", "==", payload.email).get()
+    if not user_ref:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_document = user_ref[0]
+    user_data = user_document.to_dict()
+    user_current_access_level = user_data.get("access_level")
+
+    # If the requester access level is lower than the user
+
+    if int(requester_access_level) < int(user_current_access_level):
+        raise HTTPException(
+            status_code=403,
+            detail="You cannot modify the access level of a user with a higher access level than yours.",
+        )
+
+    # If the requester access level is lower than the new access level
+
+    if int(requester_access_level) < int(payload.new_access_level):
+        raise HTTPException(
+            status_code=403, detail="Cannot assign access level higher than your own"
+        )
+
+    # Update access level in users database
+    db.collection("users").document(payload.email).update(
+        {"access_level": payload.new_access_level}
+    )
+
+    # Update access level in allowed users databse
+    db.collection("allowed_users").document(payload.email).update(
+        {"access_level": payload.new_access_level}
+    )
+
+    return {
+        "message": f"Updated access level for {payload.email} to {payload.new_access_level}"
+    }
 
 class UserSignUpModel(BaseModel):
     email: EmailStr
