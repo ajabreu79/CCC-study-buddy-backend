@@ -27,6 +27,9 @@ from src.DynamicAuth import DynamicAuth
 # Middleware import
 from middleware import auth_middleware
 
+# import routes
+from src.UserRoutes import router as user_router
+
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
 
@@ -63,7 +66,11 @@ firebase_admin.initialize_app(cred)
 db = firestore.client()
 
 # initialize FastAPI app and OpenAI client
-app = FastAPI(docs_url=f"{DEV_PREFIX}/docs", redoc_url=f"{DEV_PREFIX}/redoc", openapi_url=f"{DEV_PREFIX}/openapi.json")
+app = FastAPI(
+    docs_url=f"{DEV_PREFIX}/docs",
+    redoc_url=f"{DEV_PREFIX}/redoc",
+    openapi_url=f"{DEV_PREFIX}/openapi.json",
+)
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -95,6 +102,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Routes
+app.include_router(user_router, prefix=f"{DEV_PREFIX}/user", tags=["Development"])
+app.include_router(user_router, prefix=f"{PROD_PREFIX}/user", tags=["Production"])
+
 @app.post(f"{DEV_PREFIX}/stream_chat")
 @app.post(f"{PROD_PREFIX}/stream_chat")
 async def stream_chat(chat_stream_model: ChatStreamModel):
@@ -103,7 +114,9 @@ async def stream_chat(chat_stream_model: ChatStreamModel):
     :param chat_stream_model:
     """
     auth = DynamicAuth()
-    chat_instance = ChatStream(chat_stream_model.provider, openai_client, anthropic_client)
+    chat_instance = ChatStream(
+        chat_stream_model.provider, openai_client, anthropic_client
+    )
     return chat_instance.stream_chat(chat_stream_model)
 
 
