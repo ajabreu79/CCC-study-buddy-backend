@@ -13,13 +13,14 @@ from src.DynamicAuth import DynamicAuth
 # Middleware import
 from middleware import auth_middleware
 
-from src.constants import USER
+from src.constants import USER, MODULE
 
 # Firebase imports
 from firebase_config import db
 
 # import routes
 from src.routes.user import router as user_router
+from src.routes.module import router as module_router
 
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
@@ -49,7 +50,7 @@ origins = [
     "https://xlab-ai-demo.vercel.app",
 ]
 
-regex_origins = "https://.*jerryyang666s-projects\.vercel\.app"
+regex_origins = r"https://.*jerryyang666s-projects\.vercel\.app"
 
 
 @app.middleware("http")
@@ -70,6 +71,8 @@ app.add_middleware(
 # Routes
 app.include_router(user_router, prefix=f"{DEV_PREFIX}/{USER}", tags=["Development"])
 app.include_router(user_router, prefix=f"{PROD_PREFIX}/{USER}", tags=["Production"])
+app.include_router(module_router, prefix=f"{DEV_PREFIX}/{MODULE}", tags=["Development"])
+app.include_router(module_router, prefix=f"{PROD_PREFIX}/{MODULE}", tags=["Production"])
 
 
 @app.post(f"{DEV_PREFIX}/stream_chat")
