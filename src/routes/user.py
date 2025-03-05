@@ -213,7 +213,7 @@ def set_access_level(
 # -----------------------------------
 
 
-@router.get("/", dependencies=[Depends(require_access_level(USER_LEVEL))])
+@router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_users(
     filter_type: str = ALL, search: str = "", page: int = 1, page_size: int = 10
 ):

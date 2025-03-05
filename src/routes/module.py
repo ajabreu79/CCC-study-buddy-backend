@@ -27,7 +27,7 @@ router = APIRouter()
 # ------------------------------------------------
 # List Modules Endpoint (GET /)
 # ------------------------------------------------
-@router.get("/", dependencies=[Depends(require_access_level(USER_LEVEL))])
+@router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_modules(
     filter_deleted: bool = False, page: int = 1, page_size: int = 10, search: str = None
 ):
@@ -69,7 +69,7 @@ def list_modules(
 # ------------------------------------------------
 
 
-@router.post("/", dependencies=[Depends(require_access_level(MANAGER_LEVEL))])
+@router.post("/create", dependencies=[Depends(require_access_level(MANAGER_LEVEL))])
 def create_training_module(
     request_data: CreateTrainingModuleRequest,
     current_user: dict = Depends(get_current_user),
