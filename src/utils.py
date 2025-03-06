@@ -29,7 +29,7 @@ def create_token(user_id: str, access_level: int) -> str:
         {
             USER_ID: user_id,
             ACCESS_LEVEL: access_level,
-            EXP: datetime.datetime.utcnow() + datetime.timedelta(days=1),
+            EXP: datetime.datetime.utcnow() + datetime.timedelta(days=3),
         },
         os.getenv("JWT_SECRET_KEY"),
         algorithm="HS256",

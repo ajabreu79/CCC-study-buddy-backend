@@ -57,11 +57,15 @@ def list_modules(
     if search:
         query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
 
+    # Get total count for pagination
+    total_count_query = query
+    total_count = len(total_count_query.get())
+    
+    # Get paginated results
     modules_ref = query.offset(offset).limit(page_size).get()
-
     modules = [module.to_dict() for module in modules_ref]
 
-    return {"modules": modules, "page": page, "page_size": page_size}
+    return {"modules": modules, "page": page, "page_size": page_size, "total_count": total_count}
 
 
 # ------------------------------------------------

@@ -48,7 +48,7 @@ router = APIRouter()
 
 
 # -----------------------------------
-# User Signup and Signin Endpoints
+# Sign up
 # -----------------------------------
 
 
@@ -95,6 +95,11 @@ def sign_up(payload: UserSignUpModel = Body(...)):
     return {"message": message, "token": token}
 
 
+# -----------------------------------
+# Sign in
+# -----------------------------------
+
+
 @router.post("/signin")
 def sign_in(payload: UserSignInModel = Body(...)):
     """
@@ -119,7 +124,7 @@ def sign_in(payload: UserSignInModel = Body(...)):
 
 
 # -----------------------------------
-# Allowed Users and Access Control
+# Add to Allowed Users
 # -----------------------------------
 
 
@@ -152,6 +157,74 @@ async def allowed_users(
 
     batch.commit()
     return {"message": f"Users successfully added to allowed users list"}
+
+
+# -----------------------------------
+# List Allowed Users
+# -----------------------------------
+
+
+@router.get(
+    "/allowed-users", dependencies=[Depends(require_access_level(MANAGER_LEVEL))]
+)
+def get_allowed_users(
+    search: str = "",
+    page: int = 1,
+    page_size: int = 10,
+    current_user=Depends(get_current_user),
+):
+    """
+    List all allowed users with pagination and optional search.
+
+    Managers and administrators can access this endpoint.
+
+    Optional search:
+    - search: A search term to filter allowed users by their email (prefix match).
+
+    Pagination parameters:
+    - page (default=1): The page number.
+    - page_size (default=10): The number of allowed users per page.
+    """
+    if page < 1:
+        raise HTTPException(
+            status_code=400, detail="Page number must be greater than 0"
+        )
+    if page_size < 1:
+        raise HTTPException(status_code=400, detail="Page size must be greater than 0")
+
+    base_query = db.collection(ALLOWED_USERS)
+
+    if search:
+        base_query = base_query.order_by(EMAIL)
+        base_query = base_query.start_at({EMAIL: search})
+        base_query = base_query.end_at({EMAIL: search + "\uf8ff"})
+
+    offset_val = (page - 1) * page_size
+    query = base_query.offset(offset_val).limit(page_size)
+
+    allowed_users = [
+        {
+            EMAIL: user.to_dict().get(EMAIL),
+            ACCESS_LEVEL: user.to_dict().get(ACCESS_LEVEL),
+            CREATED_AT: user.to_dict().get(CREATED_AT),
+            CREATED_BY: user.to_dict().get(CREATED_BY),
+            MODIFIED_AT: user.to_dict().get(MODIFIED_AT),
+            MODIFIED_BY: user.to_dict().get(MODIFIED_BY),
+        }
+        for user in query.stream()
+    ]
+
+    return {
+        "allowed_users": allowed_users,
+        "page": page,
+        "page_size": page_size,
+        "total_count": len(allowed_users),
+    }
+
+
+# -----------------------------------
+# Modify User Access Level
+# -----------------------------------
 
 
 @router.post(
@@ -209,7 +282,7 @@ def set_access_level(
 
 
 # -----------------------------------
-# User Listing and Deletion
+# List Users
 # -----------------------------------
 
 
@@ -266,6 +339,11 @@ def list_users(
     return users
 
 
+# -----------------------------------
+# Delete User
+# -----------------------------------
+
+
 @router.delete("/{user_id}")
 def delete_user(user_id: str, request: Request):
     """
@@ -292,3 +370,85 @@ def delete_user(user_id: str, request: Request):
     )
 
     return {"message": f"User {user_id} has been soft deleted."}
+
+
+# -----------------------------------
+# Remove from Allowed Users List
+# -----------------------------------
+
+
+@router.delete(
+    "/allowed-users/{email}", dependencies=[Depends(require_access_level(ADMIN_LEVEL))]
+)
+async def delete_allowed_user(email: str, current_user=Depends(get_current_user)):
+    """
+    Delete a user from the allowed users list.
+
+    Only administrators can access this endpoint.
+
+    Parameters:
+    - email: The email address of the user to delete from the allowed users list.
+    """
+    doc_ref = db.collection(ALLOWED_USERS).document(email)
+    doc = doc_ref.get()
+
+    if not doc.exists:
+        raise HTTPException(
+            status_code=404, detail="User not found in allowed users list"
+        )
+
+    doc_ref.delete()
+
+    return {"message": f"User {email} has been removed from allowed users list"}
+
+
+# -----------------------------------
+# Edit access level of allowed user
+# -----------------------------------
+@router.put(
+    "/allowed-users/access-level",
+    dependencies=[Depends(require_access_level(ADMIN_LEVEL))],
+)
+async def update_allowed_user_access_level(
+    payload: SetAccessLevelModel,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Update the access level of a user in the allowed users list.
+
+    Only administrators can access this endpoint.
+
+    Parameters:
+    - email: The email address of the user to update
+    - new_access_level: The new access level to assign (0, 1, 5, or 9)
+    """
+    allowed_user_ref = db.collection(ALLOWED_USERS).document(payload.email)
+    allowed_user_doc = allowed_user_ref.get()
+
+    if not allowed_user_doc.exists:
+        raise HTTPException(
+            status_code=404, detail="User not found in allowed users list"
+        )
+
+    # Validate the new access level
+    new_level = int(payload.new_access_level)
+    allowed_levels = [9, 5, 1, 0]
+    if new_level not in allowed_levels:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid access level: {new_level}. Allowed values are {allowed_levels}",
+        )
+
+    # Update the document with new access level and modification info
+    now = datetime.datetime.utcnow()
+    update_data = {
+        ACCESS_LEVEL: new_level,
+        MODIFIED_AT: now,
+        MODIFIED_BY: current_user[USER_ID],
+    }
+
+    allowed_user_ref.update(update_data)
+
+    return {
+        "message": f"Access level updated for {payload.email} to {new_level} in allowed users list"
+    }
