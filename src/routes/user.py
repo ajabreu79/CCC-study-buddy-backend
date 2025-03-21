@@ -386,6 +386,9 @@ def delete_user(user_id: str, request: Request):
     Soft delete a user by setting the 'isDeleted' field to the current timestamp.
     The user_id is provided as a path parameter.
     """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID is required")
+
     user_query = (
         db.collection(USERS).where(filter=FieldFilter(USER_ID, "==", user_id)).limit(1)
     )

@@ -13,7 +13,7 @@ from src.DynamicAuth import DynamicAuth
 # Middleware import
 from middleware import auth_middleware
 
-from src.constants import USER, MODULE
+from src.constants import USER, MODULE, CHAT
 
 # Firebase imports
 from firebase_config import db
@@ -21,6 +21,7 @@ from firebase_config import db
 # import routes
 from src.routes.user import router as user_router
 from src.routes.module import router as module_router
+from src.routes.chat import router as chat_router
 
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
@@ -73,6 +74,8 @@ app.include_router(user_router, prefix=f"{DEV_PREFIX}/{USER}", tags=["Developmen
 app.include_router(user_router, prefix=f"{PROD_PREFIX}/{USER}", tags=["Production"])
 app.include_router(module_router, prefix=f"{DEV_PREFIX}/{MODULE}", tags=["Development"])
 app.include_router(module_router, prefix=f"{PROD_PREFIX}/{MODULE}", tags=["Production"])
+app.include_router(chat_router, prefix=f"{DEV_PREFIX}/{CHAT}", tags=["Development"])
+app.include_router(chat_router, prefix=f"{PROD_PREFIX}/{CHAT}", tags=["Production"])
 
 
 @app.post(f"{DEV_PREFIX}/stream_chat")
