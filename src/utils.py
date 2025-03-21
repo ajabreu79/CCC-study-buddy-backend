@@ -4,10 +4,10 @@ import bcrypt  # type: ignore
 import jwt  # type: ignore
 import os
 import datetime
-from src.constants import USER_ID, ACCESS_LEVEL, EXP, USER
+from src.constants import USER_ID, ACCESS_LEVEL, EXP, USER, TOKEN, SESSIONS, CREATED_AT
 from fastapi import HTTPException, status, Request, Depends
-from Cryptodome.Cipher import AES
-import base64
+
+from firebase_config import db
 
 
 def is_valid_email(email: str) -> bool:
@@ -29,7 +29,7 @@ def create_token(user_id: str, access_level: int) -> str:
         {
             USER_ID: user_id,
             ACCESS_LEVEL: access_level,
-            EXP: datetime.datetime.utcnow() + datetime.timedelta(days=3),
+            EXP: datetime.datetime.utcnow() + datetime.timedelta(days=7),
         },
         os.getenv("JWT_SECRET_KEY"),
         algorithm="HS256",
@@ -69,3 +69,68 @@ def require_access_level(min_level: int):
         return user
 
     return dependency
+
+
+def is_token_valid(session_data, token):
+    """
+    Check if the provided session_data has a valid token.
+
+    Returns True if:
+    - The stored token matches the provided token, and
+    - The current time is before the token's expiration (EXP).
+    """
+    current_time = datetime.datetime.now(datetime.timezone.utc)
+
+    return session_data.get(EXP) > current_time
+
+
+def get_session(user_id, token):
+    """
+    Retrieve the session for the given user_id and check if the token is valid.
+
+    Returns:
+    - The session data if the token is valid.
+    - None if no session exists or if the token has expired/doesn't match.
+    """
+    session_doc = db.collection(SESSIONS).document(user_id).get()
+
+    if not session_doc.exists:
+        return None
+
+    session_data = session_doc.to_dict()
+    if is_token_valid(session_data, token):
+        return session_data
+
+    db.collection(SESSIONS).document(user_id).delete()
+
+    return None
+
+
+def create_session(user_id, token):
+    """
+    Create a new session or return the existing session if a valid token is found.
+
+    The session data includes:
+    - user_id, creation timestamp (CREATED_AT)
+    - expiration timestamp (EXP), set to 7 days from creation
+    - the token (TOKEN)
+
+    If a session already exists and the token is still valid (i.e. within 7 days),
+    the stored session data is returned.
+    """
+    session_data = get_session(user_id, token)
+
+    if session_data:
+        return session_data
+
+    current_time = datetime.datetime.utcnow()
+
+    # Either no session exists or the token is expired/invalid, so create a new session.
+    new_session_data = {
+        CREATED_AT: current_time,
+        EXP: current_time + datetime.timedelta(days=7),
+        TOKEN: token,
+    }
+
+    db.collection(SESSIONS).document(user_id).set(new_session_data)
+    return new_session_data

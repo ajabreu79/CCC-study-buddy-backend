@@ -3,6 +3,10 @@ from fastapi import Request, HTTPException
 import jwt
 import os
 
+from src.utils import get_session
+
+from src.constants import USER, USER_ID
+
 
 async def auth_middleware(request: Request, call_next):
     start_time = time.perf_counter()
@@ -36,6 +40,11 @@ async def auth_middleware(request: Request, call_next):
             payload = jwt.decode(
                 token, os.getenv("JWT_SECRET_KEY"), algorithms=["HS256"]
             )
+            session_data = get_session(payload[USER_ID], token)
+
+            if not session_data:
+                raise HTTPException(status_code=401, detail="Invalid token in session")
+
             request.state.user = payload
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token has expired")

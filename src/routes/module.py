@@ -19,6 +19,7 @@ from src.constants import (
     USER_LEVEL,
     CREATED_AT,
     CREATED_BY,
+    PASSING_SCORE,
 )
 
 router = APIRouter()
@@ -60,12 +61,17 @@ def list_modules(
     # Get total count for pagination
     total_count_query = query
     total_count = len(total_count_query.get())
-    
+
     # Get paginated results
     modules_ref = query.offset(offset).limit(page_size).get()
     modules = [module.to_dict() for module in modules_ref]
 
-    return {"modules": modules, "page": page, "page_size": page_size, "total_count": total_count}
+    return {
+        "modules": modules,
+        "page": page,
+        "page_size": page_size,
+        "total_count": total_count,
+    }
 
 
 # ------------------------------------------------
@@ -97,6 +103,7 @@ def create_training_module(
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
         IS_DELETED: None,
+        PASSING_SCORE: request_data.passing_score,
     }
 
     db.collection(MODULES).document(agent_id).set(module_data)
@@ -131,6 +138,7 @@ def edit_training_module(
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
+        PASSING_SCORE: request_data.passing_score,
     }
 
     module_ref.update(update_data)
@@ -168,7 +176,6 @@ async def delete_training_module(
             IS_DELETED: now,
             MODIFIED_AT: now,
             MODIFIED_BY: current_user[USER_ID],
-            ACCESS_LEVEL: DELETED_LEVEL,
         }
     )
 

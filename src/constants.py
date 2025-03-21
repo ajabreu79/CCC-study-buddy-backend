@@ -1,7 +1,7 @@
 # DB COLLECTION
 USERS = "users"
 MODULES = "modules"
-ALLOWED_USERS = "allowed_users"
+SESSIONS = "sessions"
 
 # FIELD NAMES
 EMAIL = "email"
@@ -20,6 +20,7 @@ NAME = "name"
 SYSTEM_PROMPT = "system_prompt"
 MODIFIED_AT = "modified_at"
 MODIFIED_BY = "modified_by"
+PASSING_SCORE = "passing_score"
 
 # ACCESS LEVELS
 ALL = "all"
@@ -32,6 +33,8 @@ DELETED_LEVEL = 0
 
 # TOKEN
 EXP = "exp"
+ALLOWED_USERS = "allowed_users"
+TOKEN = "token"
 
 # GENERAL
 USER = "user"

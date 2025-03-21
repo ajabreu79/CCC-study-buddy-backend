@@ -15,6 +15,7 @@ from src.utils import (
     verify_pwd,
     get_current_user,
     require_access_level,
+    create_session,
 )
 from src.constants import (
     USERS,
@@ -40,6 +41,8 @@ from src.constants import (
     ALLOWED_USERS,
     MANAGER_LEVEL,
     ADMIN_LEVEL,
+    TOKEN,
+    SESSIONS,
 )
 
 from firebase_config import db
@@ -92,7 +95,14 @@ def sign_up(payload: UserSignUpModel = Body(...)):
     db.collection(USERS).document(payload.email).set(user_data)
     token = create_token(user_data[USER_ID], user_data[ACCESS_LEVEL])
 
-    return {"message": message, "token": token}
+    session_data = create_session(user_id, token)
+
+    if not session_data:
+        raise HTTPException(
+            status_code=500, detail="Failed to create a session for the user"
+        )
+
+    return {"message": message, "token": session_data[TOKEN]}
 
 
 # -----------------------------------
@@ -109,6 +119,7 @@ def sign_in(payload: UserSignInModel = Body(...)):
     user_ref = (
         db.collection(USERS)
         .where(filter=FieldFilter(EMAIL, "==", payload.email))
+        .where(filter=FieldFilter(ACCESS_LEVEL, ">", DELETED_LEVEL))
         .limit(1)
         .get()
     )
@@ -120,7 +131,32 @@ def sign_in(payload: UserSignInModel = Body(...)):
         raise HTTPException(status_code=401, detail="Invalid password")
 
     token = create_token(user[USER_ID], user[ACCESS_LEVEL])
-    return {"message": "Sign-in successful", "token": token}
+
+    session_data = create_session(user[USER_ID], token)
+
+    if not session_data:
+        raise HTTPException(
+            status_code=500, detail="Failed to create a session for the user"
+        )
+
+    return {"message": "Sign-in successful", "token": session_data[TOKEN]}
+
+
+@router.post("/logout", dependencies=[Depends(require_access_level(USER_LEVEL))])
+def logout(
+    current_user=Depends(get_current_user),
+):
+    """
+    Logs out a user by deleting their session from the database.
+    Expects an Authorization header with the JWT token.
+    """
+    user_id = current_user.get(USER_ID, 0)
+    try:
+        db.collection(SESSIONS).document(user_id).delete()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to delete session")
+
+    return {"message": "Logout successful"}
 
 
 # -----------------------------------
@@ -368,6 +404,8 @@ def delete_user(user_id: str, request: Request):
             ACCESS_LEVEL: DELETED_LEVEL,
         }
     )
+
+    db.collection(SESSIONS).document(user_id).delete()
 
     return {"message": f"User {user_id} has been soft deleted."}
 
