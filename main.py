@@ -13,15 +13,14 @@ from src.DynamicAuth import DynamicAuth
 # Middleware import
 from middleware import auth_middleware
 
-from src.constants import USER, MODULE, CHAT
-
-# Firebase imports
-from firebase_config import db
+# Constants import
+from src.constants import USER, MODULE, CHAT, CHAT_HISTORY
 
 # import routes
 from src.routes.user import router as user_router
 from src.routes.module import router as module_router
 from src.routes.chat import router as chat_router
+from src.routes.ChatHistory import router as chat_history_router
 
 DEV_PREFIX = "/dev"
 PROD_PREFIX = "/prod"
@@ -76,6 +75,8 @@ app.include_router(module_router, prefix=f"{DEV_PREFIX}/{MODULE}", tags=["Develo
 app.include_router(module_router, prefix=f"{PROD_PREFIX}/{MODULE}", tags=["Production"])
 app.include_router(chat_router, prefix=f"{DEV_PREFIX}/{CHAT}", tags=["Development"])
 app.include_router(chat_router, prefix=f"{PROD_PREFIX}/{CHAT}", tags=["Production"])
+app.include_router(chat_history_router, prefix=f"{DEV_PREFIX}/{CHAT_HISTORY}", tags=["Development"])
+app.include_router(chat_history_router, prefix=f"{PROD_PREFIX}/{CHAT_HISTORY}", tags=["Production"])
 
 
 @app.post(f"{DEV_PREFIX}/stream_chat")
@@ -85,7 +86,6 @@ async def stream_chat(chat_stream_model: ChatStreamModel):
     ENDPOINT: /dev/stream_chat, /prod/stream_chat
     :param chat_stream_model:
     """
-    auth = DynamicAuth()
     chat_instance = ChatStream(
         chat_stream_model.provider, openai_client, anthropic_client
     )

@@ -180,3 +180,22 @@ async def delete_training_module(
     )
 
     return {"message": f"Training module {agent_id} has been soft deleted."}
+
+
+# ------------------------------------------------
+# Get Module Title Endpoint (GET /{agent_id}/title)
+# ------------------------------------------------
+
+
+@router.get("/{agent_id}/title")
+def get_module_title(agent_id: str):
+    """
+    Get the title of a training module by its ID.
+    """
+    module_ref = db.collection(MODULES).document(agent_id)
+    module_doc = module_ref.get()
+    if not module_doc.exists:
+        raise HTTPException(status_code=404, detail="Training module not found.")
+
+    module_data = module_doc.to_dict()
+    return {"title": module_data.get(NAME)}
