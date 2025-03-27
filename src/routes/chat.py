@@ -250,8 +250,12 @@ def list_chats(
 
         # Get the last message
         current_chat = chat_data[CHAT][str(current_version)]
-        del current_chat[MESSAGES]
-
+        all_messages = chat_data[CHAT][str(current_version)][MESSAGES]
+        sorted_messages = sorted(all_messages, key=lambda x: x.get("on"))
+        last_five_messages = (
+            sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
+        )
+        current_chat[MESSAGES] = last_five_messages
         chats.append(
             {
                 CHAT_ID: chat_id,
