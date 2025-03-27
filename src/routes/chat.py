@@ -136,37 +136,36 @@ def create_chat(
 
 
 @router.get(
-    "/message/{chat_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
+    "/message/{agent_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
 )
 def create_chat(
-    chat_id: str,
+    agent_id: str,
     current_user: dict = Depends(get_current_user),
 ):
     """
     send message to llm
     """
-    if not chat_id:
-        raise HTTPException(status_code=400, detail="Chat ID is required")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="Agent ID is required")
 
     # Get existing chat or create a new one
-    doc_ref = db.collection(CHAT).document(chat_id)
-    doc = doc_ref.get()
-
-    if doc.exists and doc.to_dict().get(USER_ID) != current_user.get(USER_ID):
-        raise HTTPException(status_code=404, detail="Chat not authorized")
+    chat_data_query = (
+        db.collection(CHAT)
+        .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
+        .where(filter=FieldFilter(USER_ID, "==", current_user.get(USER_ID)))
+        .limit(1)
+        .get()
+    )
 
     response = None
 
-    if doc:
-        chat_data = doc.to_dict()
-        chat_id = chat_data.get(CHAT_ID)
+    if chat_data_query:
+        chat_data = chat_data_query[0].to_dict()
+        chat_id = chat_data_query[0].id
         current_version = chat_data.get(VERSION)
-        print(chat_data[CHAT][str(current_version)])
-        # Update previous conversation
         chats = sorted(
-            chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get("on")
+            chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get(ON)
         )
-
         response = {MESSAGES: chats, CHAT_ID: chat_id}
 
     return {MESSAGE: "Chat created successfully", DATA: response}
