@@ -13,13 +13,12 @@ from src.constants import (
     USER_ID,
     MODIFIED_AT,
     MODIFIED_BY,
-    ACCESS_LEVEL,
     MANAGER_LEVEL,
-    DELETED_LEVEL,
     USER_LEVEL,
     CREATED_AT,
     CREATED_BY,
     PASSING_SCORE,
+    CHAT,
 )
 
 router = APIRouter()
@@ -28,17 +27,24 @@ router = APIRouter()
 # ------------------------------------------------
 # List Modules Endpoint (GET /)
 # ------------------------------------------------
+
+
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_modules(
-    filter_deleted: bool = False, page: int = 1, page_size: int = 10, search: str = None
+    filter_deleted: bool = False,
+    page: int = 1,
+    page_size: int = 10,
+    search: str = None,
 ):
     """
-    List modules with pagination and search.
+    List modules with pagination and search, excluding those with an associated chat.
 
-    - **filter_deleted**: Include deleted modules in the results.
+    - **filter_deleted**: Include deleted modules if True.
     - **page**: The page number (starting from 1).
     - **page_size**: The number of modules to return per page.
-    - **search**: Optional keyword to filter modules by their title (prefix search).
+    - **search**: Optional prefix search on module title.
+
+    Returns only modules that do not have a related chat document.
     """
     if page < 1:
         raise HTTPException(
@@ -47,9 +53,7 @@ def list_modules(
     if page_size < 1:
         raise HTTPException(status_code=400, detail="Page size must be greater than 0")
 
-    offset = (page - 1) * page_size
     query = db.collection(MODULES)
-
     if filter_deleted:
         query = query.where(filter=FieldFilter(IS_DELETED, "!=", None))
     else:
@@ -58,16 +62,30 @@ def list_modules(
     if search:
         query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
 
-    # Get total count for pagination
-    total_count_query = query
-    total_count = len(total_count_query.get())
+    offset = (page - 1) * page_size
+    limited_modules_docs = query.offset(offset).limit(page_size).get()
 
-    # Get paginated results
-    modules_ref = query.offset(offset).limit(page_size).get()
-    modules = [module.to_dict() for module in modules_ref]
+    limited_modules = []
+    for doc in limited_modules_docs:
+        module = doc.to_dict()
+        module[AGENT_ID] = doc.id
+        limited_modules.append(module)
+    print(limited_modules)
+    if limited_modules:
+        module_ids = [m[AGENT_ID] for m in limited_modules]
+        chats_docs = db.collection(CHAT).where(AGENT_ID, "in", module_ids).get()
+        chat_module_ids = {chat.to_dict()[AGENT_ID] for chat in chats_docs}
+        print(chat_module_ids)
+        filtered_modules = [
+            m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
+        ]
+    else:
+        filtered_modules = []
+
+    total_count = len(filtered_modules)
 
     return {
-        "modules": modules,
+        "modules": filtered_modules,
         "page": page,
         "page_size": page_size,
         "total_count": total_count,

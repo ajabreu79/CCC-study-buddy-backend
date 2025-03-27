@@ -4,7 +4,6 @@
 USERS = "users"
 MODULES = "modules"
 ALLOWED_USERS = "allowed_users"
-CHATS = "chat"
 SESSIONS = "sessions"
 
 
@@ -89,7 +88,6 @@ ADMIN_LEVEL = 9
 MANAGER_LEVEL = 5
 USER_LEVEL = 1
 DELETED_LEVEL = 0
-OPEN = "open"
 IN_PROGRESS = "in_progress"
 COMPLETED = "completed"
 SYSTEM = "system"
@@ -112,5 +110,6 @@ TOKEN = "token"
 USER = "user"
 MODULE = "module"
 CHAT = "chat"
-CHAT_HISTORY = "chat-history"
+
+
 OPENAI_MODEL = "gpt-4o"

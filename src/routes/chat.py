@@ -3,7 +3,6 @@ import datetime
 import os
 import openai
 from google.cloud.firestore_v1.base_query import FieldFilter
-from fastapi.responses import StreamingResponse
 
 from src.utils import generate_uuid, get_current_user, require_access_level
 from firebase_config import db
@@ -11,7 +10,9 @@ from src.constants import (
     USER_LEVEL,
     AGENT_ID,
     USER_ID,
-    OPEN,
+    STATUS_OPEN,
+    STATUS_CLOSED,
+    STATUS_IN_PROGRESS,
     STATUS,
     VERSION,
     SCORE,
@@ -95,6 +96,7 @@ def create_chat(
 
         # Update previous conversation
         chat_data[CHAT][str(current_version)][COMPLETED_AT] = initial_ts
+        chat_data[CHAT][str(current_version)][STATUS] = STATUS_CLOSED
 
         # Increment version
         current_version += 1
@@ -103,7 +105,7 @@ def create_chat(
         # Add new conversation
         chat_data[CHAT][str(current_version)] = {
             SCORE: 0,
-            STATUS: OPEN,
+            STATUS: STATUS_OPEN,
             STARTED_AT: initial_ts,
             COMPLETED_AT: None,
             MESSAGES: [initial_message, response_message],
@@ -119,7 +121,7 @@ def create_chat(
             CHAT: {
                 str(current_version): {
                     SCORE: 0,
-                    STATUS: OPEN,
+                    STATUS: STATUS_OPEN,
                     STARTED_AT: initial_ts,
                     COMPLETED_AT: None,
                     MESSAGES: [initial_message, response_message],
@@ -134,37 +136,35 @@ def create_chat(
 
 
 @router.get(
-    "/message/{agent_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
+    "/message/{chat_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
 )
 def create_chat(
-    agent_id: str,
+    chat_id: str,
     current_user: dict = Depends(get_current_user),
 ):
     """
     send message to llm
     """
-    if not agent_id:
-        raise HTTPException(status_code=400, detail="Agent ID is required")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="Chat ID is required")
 
     # Get existing chat or create a new one
-    chat_data_query = (
-        db.collection(CHAT)
-        .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
-        .where(filter=FieldFilter(USER_ID, "==", current_user.get(USER_ID)))
-        .limit(1)
-        .get()
-    )
+    doc_ref = db.collection(CHAT).document(chat_id)
+    doc = doc_ref.get()
+
+    if doc.exists and doc.to_dict().get(USER_ID) != current_user.get(USER_ID):
+        raise HTTPException(status_code=404, detail="Chat not authorized")
 
     response = None
 
-    if chat_data_query:
-        chat_data = chat_data_query[0].to_dict()
-        chat_id = chat_data_query[0].id
+    if doc:
+        chat_data = doc.to_dict()
+        chat_id = chat_data.get(CHAT_ID)
         current_version = chat_data.get(VERSION)
-
+        print(chat_data[CHAT][str(current_version)])
         # Update previous conversation
-        chats = chat_data[CHAT][str(current_version)][MESSAGES].sort(
-            key=lambda x: x.get(ON)
+        chats = sorted(
+            chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get("on")
         )
 
         response = {MESSAGES: chats, CHAT_ID: chat_id}
@@ -218,8 +218,49 @@ def send_message(
 
     # Update messages in chat data
     chat_data[CHAT][str(current_version)][MESSAGES] = messages + [response_message]
-
+    chat_data[CHAT][str(current_version)][STATUS] = STATUS_IN_PROGRESS
     # Update in database
     chat_ref.set(chat_data)
 
     return {MESSAGE: "Message sent successfully", DATA: response_message}
+
+
+@router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
+def list_chats(
+    current_user: dict = Depends(get_current_user),
+    page: int = 1,
+    limit: int = 10,
+):
+    """
+    List all chats for the current user
+    """
+    chat_data_query = (
+        db.collection(CHAT)
+        .where(filter=FieldFilter(USER_ID, "==", current_user.get(USER_ID)))
+        .limit(limit)
+        .offset((page - 1) * limit)
+        .stream()
+    )
+
+    chats = []
+    for chat in chat_data_query:
+        chat_data = chat.to_dict()
+        chat_id = chat.id
+        current_version = chat_data.get(VERSION)
+
+        # Get the last message
+        current_chat = chat_data[CHAT][str(current_version)]
+        all_messages = chat_data[CHAT][str(current_version)][MESSAGES]
+        sorted_messages = sorted(all_messages, key=lambda x: x.get("on"))
+        last_five_messages = (
+            sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
+        )
+        current_chat[MESSAGES] = last_five_messages
+        chats.append(
+            {
+                CHAT_ID: chat_id,
+                CHAT: current_chat,
+            }
+        )
+
+    return {MESSAGE: "Chats retrieved successfully", DATA: chats}
