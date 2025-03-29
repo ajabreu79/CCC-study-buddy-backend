@@ -263,12 +263,8 @@ def list_chats(
             sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
         )
         current_chat[MESSAGES] = last_five_messages
-        chats.append(
-            {
-                CHAT_ID: chat_id,
-                CHAT: current_chat,
-            }
-        )
+        current_chat[CHAT_ID] = chat_id
+        chats.append(current_chat)
 
     return {
         MESSAGE: "Chats retrieved successfully",
