@@ -227,6 +227,7 @@ def send_message(
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_chats(
     current_user: dict = Depends(get_current_user),
+    status: str = None,
     page: int = 1,
     limit: int = 10,
 ):
@@ -246,6 +247,10 @@ def list_chats(
         chat_data = chat.to_dict()
         chat_id = chat.id
         current_version = chat_data.get(VERSION)
+
+        if status:
+            if chat_data[CHAT][str(current_version)][STATUS] != status:
+                continue
 
         # Get the last message
         current_chat = chat_data[CHAT][str(current_version)]
