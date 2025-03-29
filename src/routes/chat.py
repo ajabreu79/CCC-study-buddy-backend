@@ -265,6 +265,7 @@ def list_chats(
         current_chat[MESSAGES] = last_five_messages
         current_chat[CHAT_ID] = chat_id
         current_chat[VERSION] = current_version
+        current_chat[AGENT_ID] = chat_data.get(AGENT_ID)
         chats.append(current_chat)
 
     return {
