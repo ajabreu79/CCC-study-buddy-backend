@@ -31,6 +31,9 @@ from src.constants import (
     USER,
     DATA,
     MESSAGE,
+    PAGE,
+    LIMIT,
+    TOTAL,
 )
 from src.models.chat import SendMessageModel, CreateChatModel
 
@@ -267,4 +270,10 @@ def list_chats(
             }
         )
 
-    return {MESSAGE: "Chats retrieved successfully", DATA: chats}
+    return {
+        MESSAGE: "Chats retrieved successfully",
+        DATA: chats,
+        PAGE: page,
+        LIMIT: limit,
+        TOTAL: len(chats),
+    }
