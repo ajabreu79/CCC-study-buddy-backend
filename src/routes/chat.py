@@ -252,7 +252,7 @@ def list_chats(
         current_version = chat_data.get(VERSION)
 
         if status:
-            if chat_data[CHAT][str(current_version)][STATUS] != status:
+            if chat_data[CHAT][str(current_version)].get(STATUS) != status:
                 continue
 
         # Get the last message
