@@ -103,6 +103,9 @@ MESSAGE = "message"
 EXP = "exp"
 ALLOWED_USERS = "allowed_users"
 TOKEN = "token"
+PAGE = "page"
+LIMIT = "limit"
+TOTAL = "total"
 
 # ---------------------------------------
 # GENERAL (ROUTES)

@@ -31,6 +31,9 @@ from src.constants import (
     USER,
     DATA,
     MESSAGE,
+    PAGE,
+    LIMIT,
+    TOTAL,
 )
 from src.models.chat import SendMessageModel, CreateChatModel
 
@@ -227,6 +230,7 @@ def send_message(
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_chats(
     current_user: dict = Depends(get_current_user),
+    status: str = None,
     page: int = 1,
     limit: int = 10,
 ):
@@ -247,6 +251,10 @@ def list_chats(
         chat_id = chat.id
         current_version = chat_data.get(VERSION)
 
+        if status:
+            if chat_data[CHAT][str(current_version)].get(STATUS) != status:
+                continue
+
         # Get the last message
         current_chat = chat_data[CHAT][str(current_version)]
         all_messages = chat_data[CHAT][str(current_version)][MESSAGES]
@@ -255,11 +263,15 @@ def list_chats(
             sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
         )
         current_chat[MESSAGES] = last_five_messages
-        chats.append(
-            {
-                CHAT_ID: chat_id,
-                CHAT: current_chat,
-            }
-        )
+        current_chat[CHAT_ID] = chat_id
+        current_chat[VERSION] = current_version
+        current_chat[AGENT_ID] = chat_data.get(AGENT_ID)
+        chats.append(current_chat)
 
-    return {MESSAGE: "Chats retrieved successfully", DATA: chats}
+    return {
+        MESSAGE: "Chats retrieved successfully",
+        DATA: chats,
+        PAGE: page,
+        LIMIT: limit,
+        TOTAL: len(chats),
+    }
