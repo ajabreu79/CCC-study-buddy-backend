@@ -1,8 +1,13 @@
-from fastapi import APIRouter, HTTPException, Depends
+# Copyright (c) 2024.
+"""Chat API routes for the Eaton Call Center system."""
+
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 import datetime
 import os
 import openai
 from google.cloud.firestore_v1.base_query import FieldFilter
+from fastapi.responses import StreamingResponse
+from typing import List, Dict, Any, Optional
 
 from src.utils import generate_uuid, get_current_user, require_access_level
 from firebase_config import db
@@ -31,11 +36,20 @@ from src.constants import (
     USER,
     DATA,
     MESSAGE,
+    MODULE_RESOURCES,
+    RESOURCE_ID,
+    FILE_URL,
+    ORIGINAL_FILENAME,
     PAGE,
     LIMIT,
     TOTAL,
 )
-from src.models.chat import SendMessageModel, CreateChatModel
+from src.models.chat import SendMessageModel, CreateChatModel, SourceDocumentResponse
+from src.services.LangChainHelper import (
+    chat_stream_with_retrieve,
+    chat_with_rag,
+    format_chat_history,
+)
 
 router = APIRouter()
 
@@ -44,7 +58,8 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI()
 
 
-def get_openai_response(message_array: str):
+def get_openai_response(message_array: List[Dict[str, str]]):
+    """Legacy function for OpenAI responses without RAG"""
     with client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=message_array,
@@ -56,15 +71,81 @@ def get_openai_response(message_array: str):
                 yield new_text
 
 
+def get_rag_response(
+    message_array: List[Dict[str, str]], agent_id: str, use_streaming: bool = True
+):
+    """Enhanced function for RAG-powered responses
+
+    Args:
+        message_array: List of message dictionaries with 'role' and 'content'
+        agent_id: The ID of the agent/module to use for RAG context
+        use_streaming: Whether to stream the response
+
+    Returns:
+        If streaming: Generator yielding response chunks
+        If not streaming: Complete response as a string
+    """
+    # Extract user query (the last user message)
+    user_query = ""
+    for msg in reversed(message_array):
+        if msg.get("role") == USER:
+            user_query = msg.get("content", "")
+            break
+
+    # If no user query found, use the last message
+    if not user_query and message_array:
+        user_query = message_array[-1].get("content", "")
+
+    # Get system prompt (if any)
+    system_prompt = None
+    for msg in message_array:
+        if (
+            msg.get("role") == SYSTEM
+            and "system_prompt" in msg.get("content", "").lower()
+        ):
+            system_prompt = msg.get("content")
+            break
+
+    # Convert to format expected by LangChain
+    chat_history = []
+    for msg in message_array[:-1]:  # Exclude the last message (which is the query)
+        if (
+            msg.get("role") != SYSTEM
+            or "system_prompt" not in msg.get("content", "").lower()
+        ):
+            chat_history.append(msg)
+
+    # Generate response using RAG
+    if use_streaming:
+        return chat_stream_with_retrieve(
+            query=user_query,
+            agent_id=agent_id,
+            chat_history=chat_history,
+            system_prompt=system_prompt,
+        )
+    else:
+        result = chat_with_rag(
+            query=user_query,
+            agent_id=agent_id,
+            chat_history=chat_history,
+            system_prompt=system_prompt,
+        )
+
+        return result["answer"]
+
+
 @router.post("/create", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def create_chat(
     request_data: CreateChatModel,
     current_user: dict = Depends(get_current_user),
 ):
     """
-    send message to llm
+    Create a new chat session with a module
     """
     agent_query = db.collection(MODULES).document(request_data.agent_id).get()
+    if not agent_query.exists:
+        raise HTTPException(status_code=404, detail="Module not found")
+
     agent_data = agent_query.to_dict()
 
     initial_ts = datetime.datetime.now().isoformat()
@@ -83,8 +164,18 @@ def create_chat(
         .get()
     )
 
-    # Get response from OpenAI
-    response_content = "".join(list(get_openai_response([initial_message])))
+    # Get response from RAG-enhanced system
+    # Use non-streaming for this initial response
+    response_content = "".join(
+        list(
+            get_rag_response(
+                message_array=[initial_message],
+                agent_id=request_data.agent_id,
+                use_streaming=False,
+            )
+        )
+    )
+
     response_message = {
         ROLE: SYSTEM,
         CONTENT: response_content,
@@ -141,12 +232,12 @@ def create_chat(
 @router.get(
     "/message/{agent_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
 )
-def create_chat(
+def get_chat(
     agent_id: str,
     current_user: dict = Depends(get_current_user),
 ):
     """
-    send message to llm
+    Get existing chat for a module or create a new one
     """
     if not agent_id:
         raise HTTPException(status_code=400, detail="Agent ID is required")
@@ -161,6 +252,8 @@ def create_chat(
     )
 
     response = None
+    chats = []
+    chat_id = None
 
     if chat_data_query:
         chat_data = chat_data_query[0].to_dict()
@@ -180,43 +273,73 @@ def send_message(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    send message to llm
+    Send a message to the chat with RAG-enhanced responses
     """
-    # Get chat by ID directly from the request
     chat_ref = db.collection(CHAT).document(request_data.chat_id)
     chat_doc = chat_ref.get()
 
     if not chat_doc.exists:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    # Verify the chat belongs to the current user
     chat_data = chat_doc.to_dict()
-    if chat_data.get(USER_ID) != current_user.get(USER_ID):
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access this chat"
-        )
-
     current_version = chat_data.get(VERSION)
-    initial_ts = datetime.datetime.now().isoformat()
 
-    # Create user message
+    # Add user message
     current_message = {
         ROLE: USER,
         CONTENT: request_data.message,
-        ON: initial_ts,
+        ON: datetime.datetime.now().isoformat(),
     }
 
-    # Get existing messages and add the new one
+    # Get current messages
     messages = chat_data[CHAT][str(current_version)][MESSAGES].copy()
     messages.append(current_message)
 
-    # Get response from OpenAI with all messages
-    response_content = "".join(list(get_openai_response(messages)))
+    # Get agent_id for RAG context retrieval
+    agent_id = chat_data.get(AGENT_ID)
+
+    # Get response from RAG-enhanced system
+    response_content = "".join(
+        list(get_rag_response(message_array=messages, agent_id=agent_id))
+    )
+
+    # Create response message with timestamp
     response_message = {
         ROLE: SYSTEM,
         CONTENT: response_content,
         ON: datetime.datetime.now().isoformat(),
     }
+
+    # Store sources if available (extract from response format)
+    sources = []
+    if "Sources:" in response_content:
+        try:
+            # Extract source citations from the end of the response
+            response_parts = response_content.split("\n\nSources:\n")
+            if len(response_parts) > 1:
+                # Clean response content by removing sources
+                clean_response = response_parts[0]
+
+                # Extract sources
+                sources_text = response_parts[1]
+                source_lines = sources_text.strip().split("\n")
+
+                # Parse sources
+                for line in source_lines:
+                    if line.strip():
+                        # Source format: [1] Document name
+                        # or: [1] file.pdf - page 3
+                        if "]" in line:
+                            source_name = line.split("]", 1)[1].strip()
+                            sources.append(source_name)
+
+                # Update response message with clean content
+                response_message[CONTENT] = clean_response
+
+                # Add sources metadata
+                response_message["sources"] = sources
+        except Exception as e:
+            print(f"Error extracting sources: {e}")
 
     # Update messages in chat data
     chat_data[CHAT][str(current_version)][MESSAGES] = messages + [response_message]
@@ -226,6 +349,195 @@ def send_message(
 
     return {MESSAGE: "Message sent successfully", DATA: response_message}
 
+
+@router.post(
+    "/stream-message", dependencies=[Depends(require_access_level(USER_LEVEL))]
+)
+async def stream_message(
+    request_data: SendMessageModel,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Stream a RAG-enhanced response to a user message
+    """
+    chat_ref = db.collection(CHAT).document(request_data.chat_id)
+    chat_doc = chat_ref.get()
+
+    if not chat_doc.exists:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    chat_data = chat_doc.to_dict()
+    current_version = chat_data.get(VERSION)
+    agent_id = chat_data.get(AGENT_ID)
+
+    # Add user message
+    current_message = {
+        ROLE: USER,
+        CONTENT: request_data.message,
+        ON: datetime.datetime.now().isoformat(),
+    }
+
+    # Get current messages
+    messages = chat_data[CHAT][str(current_version)][MESSAGES].copy()
+    messages.append(current_message)
+
+    # First save the user message to the database
+    updated_messages = messages.copy()
+    chat_data[CHAT][str(current_version)][MESSAGES] = updated_messages
+    chat_ref.set(chat_data)
+
+    # Function to stream response and update database when done
+    async def stream_and_save():
+        response_content = ""
+        response_time = datetime.datetime.now().isoformat()
+
+        # Stream the response
+        for chunk in get_rag_response(message_array=messages, agent_id=agent_id):
+            response_content += chunk
+            yield f"data: {chunk}\n\n"
+
+        # Create response message
+        response_message = {
+            ROLE: SYSTEM,
+            CONTENT: response_content,
+            ON: response_time,
+        }
+
+        # Extract sources if available
+        sources = []
+        if "Sources:" in response_content:
+            try:
+                # Extract source citations
+                response_parts = response_content.split("\n\nSources:\n")
+                if len(response_parts) > 1:
+                    # Clean response for display
+                    clean_response = response_parts[0]
+                    sources_text = response_parts[1]
+                    source_lines = sources_text.strip().split("\n")
+
+                    for line in source_lines:
+                        if line.strip():
+                            if "]" in line:
+                                source_name = line.split("]", 1)[1].strip()
+                                sources.append(source_name)
+
+                    response_message[CONTENT] = clean_response
+                    response_message["sources"] = sources
+            except Exception as e:
+                print(f"Error extracting sources: {e}")
+
+        # Update in database
+        try:
+            # Get latest chat data
+            chat_doc = chat_ref.get()
+            if chat_doc.exists:
+                chat_data = chat_doc.to_dict()
+                chat_data[CHAT][str(current_version)][MESSAGES] = updated_messages + [
+                    response_message
+                ]
+                chat_ref.set(chat_data)
+        except Exception as e:
+            print(f"Error updating chat in database: {e}")
+
+        yield "data: [DONE]\n\n"
+
+    # Return streaming response
+    return StreamingResponse(stream_and_save(), media_type="text/event-stream")
+
+
+@router.get(
+    "/sources/{chat_id}/{message_index}",
+    dependencies=[Depends(require_access_level(USER_LEVEL))],
+    response_model=SourceDocumentResponse,
+)
+async def get_message_sources(
+    chat_id: str,
+    message_index: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Retrieve source documents for a specific message in a chat
+
+    Args:
+        chat_id: The ID of the chat
+        message_index: The index of the message in the messages array
+
+    Returns:
+        Source document information
+    """
+    # Get chat
+    chat_ref = db.collection(CHAT).document(chat_id)
+    chat_doc = chat_ref.get()
+
+    if not chat_doc.exists:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    chat_data = chat_doc.to_dict()
+
+    # Check access permission
+    if chat_data.get(USER_ID) != current_user[USER_ID]:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this chat"
+        )
+
+    # Get current version
+    current_version = chat_data.get(VERSION)
+
+    # Get messages
+    messages = chat_data[CHAT][str(current_version)].get(MESSAGES, [])
+
+    # Check if message index is valid
+    if message_index < 0 or message_index >= len(messages):
+        raise HTTPException(status_code=400, detail="Invalid message index")
+
+    message = messages[message_index]
+
+    # Check if message has sources
+    sources = message.get("sources", [])
+    if not sources:
+        return {"chat_id": chat_id, "message_index": message_index, "sources": []}
+
+    # Get source documents from resources collection
+    source_docs = []
+    agent_id = chat_data.get(AGENT_ID)
+
+    # Query resources for this module
+    resource_query = (
+        db.collection(MODULE_RESOURCES)
+        .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
+        .get()
+    )
+
+    # Map resources for lookup
+    resources_map = {doc.id: doc.to_dict() for doc in resource_query}
+
+    # Collect source information
+    for source in sources:
+        # Try to match source with resource names
+        for resource_id, resource_data in resources_map.items():
+            filename = resource_data.get(ORIGINAL_FILENAME, "")
+            if filename in source:
+                source_docs.append(
+                    {
+                        "resource_id": resource_id,
+                        "file_name": filename,
+                        "file_url": resource_data.get(FILE_URL),
+                        "source_text": source,
+                    }
+                )
+                break
+        else:
+            # If no match found, add with limited info
+            source_docs.append(
+                {
+                    "resource_id": None,
+                    "file_name": source,
+                    "file_url": None,
+                    "source_text": source,
+                }
+            )
+
+    return {"chat_id": chat_id, "message_index": message_index, "sources": source_docs}
 
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_chats(

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -7,9 +7,21 @@ class CreateTrainingModuleRequest(BaseModel):
     system_prompt: str = Field(
         ..., min_length=1, description="System prompt for the training module"
     )
-    passing_score: int = Field(
-        ..., ge=0, le=100, description="Passing score for the training module"
+    criteria: List[str] = Field(
+        None, min_length=1, description="Criteria for the training module"
     )
+
+    @field_validator("title", "system_prompt")
+    def validate_non_empty(cls, value, field):
+        if not value.strip():
+            raise ValueError(f"{field.name} cannot be empty")
+        return value
+
+    @field_validator("criteria")
+    def validate_non_empty_list(cls, value):
+        if not all(item.strip() for item in value):
+            raise ValueError("All items in criteria must be non-empty strings")
+        return value
 
 
 class EditTrainingModuleRequest(BaseModel):
@@ -19,8 +31,8 @@ class EditTrainingModuleRequest(BaseModel):
     system_prompt: Optional[str] = Field(
         None, min_length=1, description="Optional updated system prompt"
     )
-    passing_score: Optional[int] = Field(
-        None, ge=0, le=100, description="Optional updated passing score"
+    criteria: Optional[List[str]] = Field(
+        None, min_length=1, description="Optional updated criteria"
     )
 
     @field_validator("title", "system_prompt")
@@ -29,8 +41,29 @@ class EditTrainingModuleRequest(BaseModel):
             raise ValueError(f"{field.name} cannot be empty if provided")
         return value
 
-    @field_validator("passing_score")
-    def validate_passing_score(cls, value):
-        if value is not None and not 0 <= value <= 100:
-            raise ValueError("Passing score must be between 0 and 100")
+    @field_validator("criteria")
+    def validate_non_empty_list(cls, value):
+        if value is not None and not all(item.strip() for item in value):
+            raise ValueError("All items in criteria must be non-empty strings")
         return value
+
+
+class ModuleListResponse(BaseModel):
+    modules: List[Dict[str, Any]]
+    page: int
+    page_size: int
+    total_count: int
+
+
+class ResourceListResponse(BaseModel):
+    resources: List[Dict[str, Any]]
+    module_id: str
+    count: int
+
+
+class ResourceUploadResponse(BaseModel):
+    message: str
+    resource_id: str
+    file_url: str
+    filename: str
+    status: str

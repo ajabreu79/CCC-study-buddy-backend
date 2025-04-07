@@ -72,3 +72,16 @@ class SendMessageModel(BaseModel):
         if value is not None and not value.strip():
             raise ValueError(f"{field.name} cannot be empty if provided")
         return value
+
+
+class SourceDocument(BaseModel):
+    resource_id: Optional[str] = None
+    file_name: str
+    file_url: Optional[str] = None
+    source_text: str
+
+
+class SourceDocumentResponse(BaseModel):
+    chat_id: str
+    message_index: int
+    sources: List[SourceDocument]

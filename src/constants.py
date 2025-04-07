@@ -15,6 +15,9 @@ CREATED_AT = "CREATED_AT"
 MODIFIED_AT = "modified_at"
 MODIFIED_BY = "modified_by"
 IS_DELETED = "isDeleted"
+PROCESSED_AT = "processed_at"
+CHUNK_COUNT = "chunk_count"
+ERROR_MESSAGE = "error_message"
 
 # ---------------------------------------
 # USER-RELATED FIELDS
@@ -45,7 +48,23 @@ COMPLETED_AT = "completed_at"
 MESSAGES = "messages"
 CONTENT = "content"
 CHAT_ID = "chat_id"
-PASSING_SCORE = "passing_score"
+CRITERIA = "criteria"
+
+# ---------------------------------------
+# MODULE RESOURCE-RELATED FIELDS
+# ---------------------------------------
+MODULE_RESOURCES = "module_resources"
+RESOURCE_ID = "resource_id"
+ORIGINAL_FILENAME = "original_filename"
+S3_KEY = "s3_key"
+UPLOAD_TIMESTAMP = "upload_timestamp"
+UPLOADER_ID = "uploader_id"
+FILE_SIZE = "file_size"
+RESOURCE_TYPE = "resource_type"
+FILE_URL = "file_url"
+PROCESSING_STATUS = "processing_status"
+MIME_TYPE = "mime_type"
+PDF_TYPE = "pdf"
 
 
 # ---------------------------------------

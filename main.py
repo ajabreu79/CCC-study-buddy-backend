@@ -46,6 +46,7 @@ origins = [
     "http://localhost:3000",
     "http://127.0.0.1:5173",
     "https://eaton1.xlab-cwru.com",
+    "https://preview.eaton1.xlab-cwru.com",
     "https://xlab-ai-demo.vercel.app",
 ]
 
