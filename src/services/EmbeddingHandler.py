@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone.control.pinecone import Pinecone
-from pinecone import Index
+from pinecone import Index, ServerlessSpec
 from pydantic import SecretStr
 
 from src.services.S3Handler import S3Handler
@@ -28,6 +28,16 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 embeddings = OpenAIEmbeddings(api_key=SecretStr(OPENAI_API_KEY))
+
+index_name = "eaton-modules"
+
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+    )
 
 
 @dataclass

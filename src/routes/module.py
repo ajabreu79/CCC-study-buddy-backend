@@ -48,7 +48,6 @@ from src.constants import (
     USER_LEVEL,
     CREATED_AT,
     CREATED_BY,
-    PASSING_SCORE,
     CHAT,
 )
 from src.models.module import (
@@ -222,8 +221,10 @@ async def process_pdf_upload(
 
 @router.post("/create", dependencies=[Depends(require_access_level(MANAGER_LEVEL))])
 async def create_training_module(
-    request_data: CreateTrainingModuleRequest,
     background_tasks: BackgroundTasks,
+    request_data: CreateTrainingModuleRequest = Depends(
+        CreateTrainingModuleRequest.as_form
+    ),
     pdf_file: UploadFile | None = File(None),
     current_user: dict = Depends(get_current_user),
 ):
@@ -276,9 +277,11 @@ async def create_training_module(
 @router.put("/{agent_id}", dependencies=[Depends(require_access_level(MANAGER_LEVEL))])
 async def edit_training_module(
     agent_id: str,
-    request_data: EditTrainingModuleRequest,
     background_tasks: BackgroundTasks,
-    pdf_file: UploadFile | None = None,
+    request_data: EditTrainingModuleRequest = Depends(
+        EditTrainingModuleRequest.as_form
+    ),
+    pdf_file: UploadFile | None = File(None),
     current_user: dict = Depends(get_current_user),
 ):
     """

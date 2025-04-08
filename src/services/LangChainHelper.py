@@ -170,7 +170,7 @@ def chat_with_rag(
     )
 
     # Execute chain
-    response = chain({"question": query})
+    response = chain({"question": query, "chat_history": chat_history})
 
     # Extract source information
     sources = []
