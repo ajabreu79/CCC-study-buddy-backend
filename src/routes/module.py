@@ -76,6 +76,7 @@ def list_modules(
     page: int = 1,
     page_size: int = 10,
     search: str = None,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     List modules with pagination and search, excluding those with an associated chat.
@@ -114,9 +115,16 @@ def list_modules(
     print(limited_modules)
     if limited_modules:
         module_ids = [m[AGENT_ID] for m in limited_modules]
-        chats_docs = db.collection(CHAT).where(AGENT_ID, "in", module_ids).get()
+        # Filter chats by both agent_id and the current user
+        chats_docs = (
+            db.collection(CHAT)
+            .where(AGENT_ID, "in", module_ids)
+            .where(
+                USER_ID, "==", current_user.get(USER_ID)
+            )  # Only filter current user's chats
+            .get()
+        )
         chat_module_ids = {chat.to_dict()[AGENT_ID] for chat in chats_docs}
-        print(chat_module_ids)
         filtered_modules = [
             m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
         ]
