@@ -315,6 +315,7 @@ async def edit_training_module(
     """
     Edit an existing training module. Optionally, if a new PDF file is provided,
     process it in the background using the shared `process_pdf_upload` function.
+    If keep_existing_pdf is False and no new PDF is uploaded, delete all existing PDFs.
     """
     module_ref = db.collection(MODULES).document(agent_id)
     module_doc = module_ref.get()
@@ -347,6 +348,57 @@ async def edit_training_module(
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload PDF: {str(e)}"
+            )
+    # If keep_existing_pdf is False and no new PDF is uploaded, delete existing PDFs
+    elif not request_data.keep_existing_pdf:
+        try:
+            # Query all non-deleted PDF resources for this module
+            resources_query = (
+                db.collection(MODULE_RESOURCES)
+                .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
+                .where(filter=FieldFilter(IS_DELETED, "==", None))
+                .where(filter=FieldFilter(RESOURCE_TYPE, "==", PDF_TYPE))
+                .get()
+            )
+
+            # Prepare a batch for efficient updates
+            batch = db.batch()
+
+            # Track resource IDs to remove from module
+            resource_ids_to_remove = []
+
+            for resource_doc in resources_query:
+                resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
+                resource_ids_to_remove.append(resource_doc.id)
+
+                # Soft delete the resource
+                batch.update(
+                    resource_ref,
+                    {
+                        IS_DELETED: now,
+                        MODIFIED_AT: now,
+                        MODIFIED_BY: current_user[USER_ID],
+                    },
+                )
+
+            if resource_ids_to_remove:
+                # Remove resources from module's resources array
+                batch.update(
+                    module_ref,
+                    {
+                        "resources": firestore.ArrayRemove(resource_ids_to_remove),
+                        MODIFIED_AT: now,
+                        MODIFIED_BY: current_user[USER_ID],
+                    },
+                )
+
+                # Commit all updates
+                batch.commit()
+                response["removed_pdf_count"] = len(resource_ids_to_remove)
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to remove existing PDFs: {str(e)}"
             )
 
     return response
