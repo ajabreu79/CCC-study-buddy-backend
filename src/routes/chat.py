@@ -309,7 +309,7 @@ def get_chat(
 def send_message(
     request_data: SendMessageModel,
     current_user: dict = Depends(get_current_user),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks,
 ):
     """
     Send a message to the chat with RAG-enhanced responses
