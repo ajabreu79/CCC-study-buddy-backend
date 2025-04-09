@@ -116,7 +116,7 @@ def list_modules(
     if limited_modules:
         # Get all modules
         module_ids_dict = {m[AGENT_ID]: m for m in limited_modules}
-        print("1.Module IDs: ", module_ids_dict.keys())
+
         # Get all chats for the current user
         chats_query = (
             db.collection(CHAT).where(USER_ID, "==", current_user.get(USER_ID)).get()
@@ -128,12 +128,12 @@ def list_modules(
             chat_data = chat.to_dict()
             if chat_data[AGENT_ID] in module_ids_dict:
                 chat_module_ids.add(chat_data[AGENT_ID])
-        print("2.Chat Module IDs: ", chat_module_ids)
+
         # Filter out modules with existing chats
         filtered_modules = [
             m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
         ]
-        print("3.Filtered Module IDs: ", filtered_modules)
+
         # Pagination
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
