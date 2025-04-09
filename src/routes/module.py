@@ -21,6 +21,7 @@ from src.constants import (
     MODULES,
     MODULE_RESOURCES,
     AGENT_ID,
+    DELIMITER,
     NAME,
     SYSTEM_PROMPT,
     CREATED_BY,
@@ -110,7 +111,7 @@ def list_modules(
     limited_modules = []
     for doc in limited_modules_docs:
         module_data = doc.to_dict()
-        module_data[CRITERIA] = list(module_data.get(CRITERIA, []))
+        module_data[CRITERIA] = list(module_data.get(CRITERIA).split(DELIMITER))
         limited_modules.append(module_data)
 
     if limited_modules:
@@ -294,7 +295,7 @@ async def create_training_module(
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
         IS_DELETED: None,
-        CRITERIA: criteria,
+        CRITERIA: criteria.join(DELIMITER),
     }
 
     # Save the module in Firestore.
@@ -374,7 +375,7 @@ async def edit_training_module(
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
-        CRITERIA: criteria,
+        CRITERIA: criteria.join(DELIMITER),
     }
 
     module_ref.update(updated_data)

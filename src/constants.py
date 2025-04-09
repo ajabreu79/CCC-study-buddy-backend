@@ -109,7 +109,7 @@ COMPLETED = "completed"
 SYSTEM = "system"
 ON = "on"
 ROLE = "role"
-
+DELIMITER = "#;$;#"
 
 # ---------------------------------------
 # TOKEN
