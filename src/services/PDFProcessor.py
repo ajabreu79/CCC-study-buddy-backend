@@ -119,7 +119,7 @@ class PDFProcessor:
             chunked_docs = self.chunk_text(documents)
 
             # Prepare namespace for this specific resource
-            namespace = f"module_{agent_id}_resource_{resource_id}"
+            namespace = f"module_{agent_id}"
 
             # Add chunk_id to metadata
             for i, doc in enumerate(chunked_docs):

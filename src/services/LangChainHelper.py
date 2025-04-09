@@ -40,7 +40,7 @@ User Query: {question}"""
 
 def get_retriever(
     index_name: str,
-    namespace: Optional[str] = None,
+    namespace: str,
     agent_id: Optional[str] = None,
     top_k: int = 3,
     score_threshold: float = 0.7,
@@ -64,17 +64,8 @@ def get_retriever(
         namespace=namespace,
     )
 
-    # Configure the retriever with metadata filtering
-    search_kwargs = {"k": top_k, "score_threshold": score_threshold}
-
-    # Add filter for agent_id if specified
-    if agent_id:
-        search_kwargs["filter"] = {"agent_id": agent_id}
-
     # Return the retriever
-    return vector_store.as_retriever(
-        search_type="similarity_score_threshold", search_kwargs=search_kwargs
-    )
+    return vector_store.as_retriever()
 
 
 def format_chat_history(
@@ -129,7 +120,10 @@ def chat_with_rag(
         chat_history = []
 
     # Get retriever filtered by agent_id
-    retriever = get_retriever(index_name=index_name, agent_id=agent_id, top_k=top_k)
+    retriever = get_retriever(
+        index_name,
+        f"module_{agent_id}",
+    )
 
     # Format system prompt
     if not system_prompt:
@@ -217,7 +211,10 @@ def chat_stream_with_retrieve(
         chat_history = []
 
     # Get retriever filtered by agent_id
-    retriever = get_retriever(index_name=index_name, agent_id=agent_id, top_k=top_k)
+    retriever = get_retriever(
+        index_name,
+        f"module_{agent_id}",
+    )
 
     # Retrieve relevant documents
     docs = retriever.get_relevant_documents(query)
