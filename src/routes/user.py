@@ -93,7 +93,11 @@ def sign_up(payload: UserSignUpModel = Body(...)):
     }
 
     db.collection(USERS).document(payload.email).set(user_data)
-    token = create_token(user_data[USER_ID], user_data[ACCESS_LEVEL])
+    token = create_token(
+        user_data[USER_ID],
+        user_data[FIRST_NAME] + " " + user_data[LAST_NAME],
+        user_data[ACCESS_LEVEL],
+    )
 
     session_data = create_session(user_id, token)
 
@@ -130,7 +134,11 @@ def sign_in(payload: UserSignInModel = Body(...)):
     if not verify_pwd(payload.password, user[HASHED_PW]):
         raise HTTPException(status_code=401, detail="Invalid password")
 
-    token = create_token(user[USER_ID], user[ACCESS_LEVEL])
+    token = create_token(
+        user[USER_ID],
+        user[FIRST_NAME] + " " + user[LAST_NAME],
+        user[ACCESS_LEVEL],
+    )
 
     session_data = create_session(user[USER_ID], token)
 

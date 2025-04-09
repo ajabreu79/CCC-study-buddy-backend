@@ -23,12 +23,13 @@ def encrypt_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def create_token(user_id: str, access_level: int) -> str:
+def create_token(user_id: str, name: str, access_level: int) -> str:
 
     return jwt.encode(
         {
             USER_ID: user_id,
             ACCESS_LEVEL: access_level,
+            USER: name,
             EXP: datetime.datetime.utcnow() + datetime.timedelta(days=7),
         },
         os.getenv("JWT_SECRET_KEY"),

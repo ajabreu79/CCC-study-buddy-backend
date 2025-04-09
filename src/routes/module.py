@@ -76,6 +76,7 @@ def list_modules(
     page: int = 1,
     page_size: int = 10,
     search: str = None,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     List modules with pagination and search, excluding those with an associated chat.
@@ -103,9 +104,8 @@ def list_modules(
     if search:
         query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
 
-    offset = (page - 1) * page_size
-    limited_modules_docs = query.offset(offset).limit(page_size).get()
-
+    limited_modules_docs = query.get()
+    filtered_modules = []
     limited_modules = []
     for doc in limited_modules_docs:
         module = doc.to_dict()
@@ -113,14 +113,21 @@ def list_modules(
         limited_modules.append(module)
     if limited_modules:
         module_ids = [m[AGENT_ID] for m in limited_modules]
-        chats_docs = db.collection(CHAT).where(AGENT_ID, "in", module_ids).get()
+        chats_docs = (
+            db.collection(CHAT)
+            .where(AGENT_ID, "in", module_ids)
+            .where(USER_ID, "==", current_user.get(USER_ID))
+            .get()
+        )
         chat_module_ids = {chat.to_dict()[AGENT_ID] for chat in chats_docs}
-        print(chat_module_ids)
         filtered_modules = [
             m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
         ]
-    else:
-        filtered_modules = []
+
+        # Pagination
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        filtered_modules = filtered_modules[start_index:end_index]
 
     total_count = len(filtered_modules)
 
@@ -151,7 +158,7 @@ async def process_pdf_upload(
 
     # Read file content
     file_content = await pdf_file.read()
-    
+
     # Reset file pointer to the beginning
     await pdf_file.seek(0)
 
@@ -195,7 +202,9 @@ async def process_pdf_upload(
 
     try:
         # Upload the PDF file to S3
-        s3_handler.upload_file(file_obj=pdf_file.file, s3_key=s3_key, content_type=pdf_file.content_type)
+        s3_handler.upload_file(
+            file_obj=pdf_file.file, s3_key=s3_key, content_type=pdf_file.content_type
+        )
     except Exception as e:
         print("Failed to upload PDF: ", str(e))
         raise HTTPException(status_code=500, detail=f"Failed to upload PDF: {str(e)}")
@@ -244,6 +253,28 @@ async def create_training_module(
     """
     agent_id = generate_uuid()
     now = datetime.datetime.utcnow()
+
+    # Check the criteria
+    if not request_data.criteria:
+        raise HTTPException(status_code=400, detail="Criteria cannot be empty")
+
+    if not isinstance(request_data.criteria, list):
+        raise HTTPException(
+            status_code=400, detail="Criteria must be a list of strings"
+        )
+
+    criteria = []
+    for item in request_data.criteria:
+        if not isinstance(item, str):
+            raise HTTPException(
+                status_code=400, detail="Each criterion must be a string"
+            )
+        if len(item) > 100:
+            raise HTTPException(
+                status_code=400, detail="Each criterion cannot exceed 100 characters"
+            )
+        criteria.append(str(item))
+
     module_data = {
         AGENT_ID: agent_id,
         NAME: request_data.title,
@@ -253,7 +284,7 @@ async def create_training_module(
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
         IS_DELETED: None,
-        CRITERIA: request_data.criteria,
+        CRITERIA: criteria,
     }
 
     # Save the module in Firestore.
@@ -305,13 +336,36 @@ async def edit_training_module(
 
     now = datetime.datetime.utcnow()
     # Update the module's fields as needed.
+
+    # Check the criteria
+    if not request_data.criteria:
+        raise HTTPException(status_code=400, detail="Criteria cannot be empty")
+
+    if not isinstance(request_data.criteria, list):
+        raise HTTPException(
+            status_code=400, detail="Criteria must be a list of strings"
+        )
+
+    criteria = []
+    for item in request_data.criteria:
+        if not isinstance(item, str):
+            raise HTTPException(
+                status_code=400, detail="Each criterion must be a string"
+            )
+        if len(item) > 100:
+            raise HTTPException(
+                status_code=400, detail="Each criterion cannot exceed 100 characters"
+            )
+        criteria.append(str(item))
+
     updated_data = {
         NAME: request_data.title,
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
-        CRITERIA: request_data.criteria,
+        CRITERIA: criteria,
     }
+
     module_ref.update(updated_data)
 
     response = {
