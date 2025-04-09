@@ -111,7 +111,6 @@ def list_modules(
         module = doc.to_dict()
         module[AGENT_ID] = doc.id
         limited_modules.append(module)
-    print(limited_modules)
     if limited_modules:
         module_ids = [m[AGENT_ID] for m in limited_modules]
         chats_docs = db.collection(CHAT).where(AGENT_ID, "in", module_ids).get()
@@ -150,11 +149,15 @@ async def process_pdf_upload(
     ):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    # Read file content.
+    # Read file content
     file_content = await pdf_file.read()
+    
+    # Reset file pointer to the beginning
+    await pdf_file.seek(0)
+
     resource_id = generate_uuid()
     now = datetime.datetime.utcnow()
-    s3_key = f"modules/{agent_id}/resources/{resource_id}.pdf"
+    s3_key = f"module/{agent_id}/resources/{resource_id}.pdf"
     placeholder_url = f"/api/module/{agent_id}/resource/{resource_id}"
 
     # Prepare the resource metadata.
@@ -189,6 +192,13 @@ async def process_pdf_upload(
             MODIFIED_BY: current_user[USER_ID],
         }
     )
+
+    try:
+        # Upload the PDF file to S3
+        s3_handler.upload_file(file_obj=pdf_file.file, s3_key=s3_key, content_type=pdf_file.content_type)
+    except Exception as e:
+        print("Failed to upload PDF: ", str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to upload PDF: {str(e)}")
 
     # Schedule PDF processing in the background.
     from src.services.PDFProcessor import PDFProcessor

@@ -75,7 +75,6 @@ class S3Handler:
         upload_args = {
             "Bucket": self.bucket_name,
             "Key": s3_key,
-            "ContentType": content_type,
         }
 
         # Add metadata if provided
@@ -85,9 +84,7 @@ class S3Handler:
             upload_args["Metadata"] = str_metadata
 
         # Handle different types of file objects
-        if hasattr(file_obj, "file"):  # For UploadFile from FastAPI
-            self.s3_client.upload_fileobj(file_obj.file, **upload_args)
-        elif hasattr(file_obj, "read"):  # For file-like objects
+        if hasattr(file_obj, "read"):  # For file-like objects
             self.s3_client.upload_fileobj(file_obj, **upload_args)
         else:
             raise ValueError("Unsupported file object type")
