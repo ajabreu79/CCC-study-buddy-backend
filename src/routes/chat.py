@@ -44,7 +44,12 @@ from src.constants import (
     LIMIT,
     TOTAL,
 )
-from src.models.chat import SendMessageModel, CreateChatModel, SourceDocumentResponse
+from src.models.chat import (
+    SendMessageModel,
+    CreateChatModel,
+    SourceDocumentResponse,
+    ChatStatusUpdate,
+)
 from src.services.LangChainHelper import (
     chat_stream_with_retrieve,
     chat_with_rag,
@@ -539,6 +544,7 @@ async def get_message_sources(
 
     return {"chat_id": chat_id, "message_index": message_index, "sources": source_docs}
 
+
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_chats(
     current_user: dict = Depends(get_current_user),
@@ -587,3 +593,65 @@ def list_chats(
         LIMIT: limit,
         TOTAL: len(chats),
     }
+
+
+@router.put(
+    "/status/{chat_id}", dependencies=[Depends(require_access_level(USER_LEVEL))]
+)
+def update_chat_status(
+    chat_id: str,
+    status_update: ChatStatusUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Update the status of a chat (open, closed, etc.)
+
+    Args:
+        chat_id: The ID of the chat to update
+        status_update: The new status data
+
+    Returns:
+        Success message and chat ID
+    """
+    # Get chat document
+    chat_ref = db.collection(CHAT).document(chat_id)
+    chat_doc = chat_ref.get()
+
+    if not chat_doc.exists:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    chat_data = chat_doc.to_dict()
+
+    # Check access permission
+    if chat_data.get(USER_ID) != current_user[USER_ID]:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to modify this chat"
+        )
+
+    # Validate status value
+    new_status = status_update.status.lower()
+    valid_statuses = [STATUS_OPEN, STATUS_CLOSED, STATUS_IN_PROGRESS]
+    if new_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status value. Must be one of: {', '.join(valid_statuses)}",
+        )
+
+    # Get current version and update status
+    current_version = chat_data.get(VERSION)
+
+    # Update fields based on status
+    update_data = {
+        f"{CHAT}.{current_version}.{STATUS}": new_status,
+    }
+
+    # If closing the chat, add completion timestamp
+    if new_status == STATUS_CLOSED:
+        update_data[f"{CHAT}.{current_version}.{COMPLETED_AT}"] = (
+            datetime.datetime.now().isoformat()
+        )
+
+    # Update the document
+    chat_ref.update(update_data)
+
+    return {"message": "Chat status updated successfully", "chat_id": chat_id}
