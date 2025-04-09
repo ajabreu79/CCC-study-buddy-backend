@@ -109,7 +109,9 @@ def list_modules(
     filtered_modules = []
     limited_modules = []
     for doc in limited_modules_docs:
-        limited_modules.append(doc.to_dict())
+        module_data = doc.to_dict()
+        module_data[CRITERIA] = list(module_data.get(CRITERIA, []))
+        limited_modules.append(module_data)
 
     if limited_modules:
         # Get all modules
