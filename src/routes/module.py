@@ -76,6 +76,7 @@ def list_modules(
     page: int = 1,
     page_size: int = 10,
     search: str = None,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     List modules with pagination and search, excluding those with an associated chat.
@@ -111,14 +112,42 @@ def list_modules(
         module = doc.to_dict()
         module[AGENT_ID] = doc.id
         limited_modules.append(module)
+
     if limited_modules:
         module_ids = [m[AGENT_ID] for m in limited_modules]
-        chats_docs = db.collection(CHAT).where(AGENT_ID, "in", module_ids).get()
+        # Filter chats by both agent_id and the current user
+        chats_docs = (
+            db.collection(CHAT)
+            .where(AGENT_ID, "in", module_ids)
+            .where(
+                USER_ID, "==", current_user.get(USER_ID)
+            )  # Only filter current user's chats
+            .get()
+        )
         chat_module_ids = {chat.to_dict()[AGENT_ID] for chat in chats_docs}
-        print(chat_module_ids)
         filtered_modules = [
             m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
         ]
+
+        # Query for PDF resources associated with these modules
+        if filtered_modules:
+            filtered_module_ids = [m[AGENT_ID] for m in filtered_modules]
+            resources_query = (
+                db.collection(MODULE_RESOURCES)
+                .where(filter=FieldFilter(AGENT_ID, "in", filtered_module_ids))
+                .where(filter=FieldFilter(IS_DELETED, "==", None))
+                .where(filter=FieldFilter(RESOURCE_TYPE, "==", PDF_TYPE))
+                .get()
+            )
+
+            # Create a map of module IDs to whether they have PDFs
+            modules_with_pdfs = {
+                resource.to_dict()[AGENT_ID] for resource in resources_query
+            }
+
+            # Add has_pdf flag to each module
+            for module in filtered_modules:
+                module["has_pdf"] = module[AGENT_ID] in modules_with_pdfs
     else:
         filtered_modules = []
 
@@ -297,6 +326,7 @@ async def edit_training_module(
     """
     Edit an existing training module. Optionally, if a new PDF file is provided,
     process it in the background using the shared `process_pdf_upload` function.
+    If keep_existing_pdf is False and no new PDF is uploaded, delete all existing PDFs.
     """
     module_ref = db.collection(MODULES).document(agent_id)
     module_doc = module_ref.get()
@@ -329,6 +359,57 @@ async def edit_training_module(
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload PDF: {str(e)}"
+            )
+    # If keep_existing_pdf is False and no new PDF is uploaded, delete existing PDFs
+    elif not request_data.keep_existing_pdf:
+        try:
+            # Query all non-deleted PDF resources for this module
+            resources_query = (
+                db.collection(MODULE_RESOURCES)
+                .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
+                .where(filter=FieldFilter(IS_DELETED, "==", None))
+                .where(filter=FieldFilter(RESOURCE_TYPE, "==", PDF_TYPE))
+                .get()
+            )
+
+            # Prepare a batch for efficient updates
+            batch = db.batch()
+
+            # Track resource IDs to remove from module
+            resource_ids_to_remove = []
+
+            for resource_doc in resources_query:
+                resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
+                resource_ids_to_remove.append(resource_doc.id)
+
+                # Soft delete the resource
+                batch.update(
+                    resource_ref,
+                    {
+                        IS_DELETED: now,
+                        MODIFIED_AT: now,
+                        MODIFIED_BY: current_user[USER_ID],
+                    },
+                )
+
+            if resource_ids_to_remove:
+                # Remove resources from module's resources array
+                batch.update(
+                    module_ref,
+                    {
+                        "resources": firestore.ArrayRemove(resource_ids_to_remove),
+                        MODIFIED_AT: now,
+                        MODIFIED_BY: current_user[USER_ID],
+                    },
+                )
+
+                # Commit all updates
+                batch.commit()
+                response["removed_pdf_count"] = len(resource_ids_to_remove)
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to remove existing PDFs: {str(e)}"
             )
 
     return response

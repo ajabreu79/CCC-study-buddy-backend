@@ -46,6 +46,9 @@ class EditTrainingModuleRequest(BaseModel):
     criteria: Optional[List[str]] = Field(
         None, min_length=1, description="Optional updated criteria"
     )
+    keep_existing_pdf: bool = Field(
+        False, description="Whether to keep existing PDF files"
+    )
 
     @field_validator("title", "system_prompt")
     @classmethod
@@ -67,8 +70,14 @@ class EditTrainingModuleRequest(BaseModel):
         title: Optional[str] = Form(None),
         system_prompt: Optional[str] = Form(None),
         criteria: Optional[List[str]] = Form(None),
+        keep_existing_pdf: bool = Form(False),
     ):
-        return cls(title=title, system_prompt=system_prompt, criteria=criteria)
+        return cls(
+            title=title,
+            system_prompt=system_prompt,
+            criteria=criteria,
+            keep_existing_pdf=keep_existing_pdf,
+        )
 
 
 class ModuleListResponse(BaseModel):
