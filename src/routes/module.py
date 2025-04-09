@@ -295,7 +295,7 @@ async def create_training_module(
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
         IS_DELETED: None,
-        CRITERIA: criteria.join(DELIMITER),
+        CRITERIA: DELIMITER.join(criteria),
     }
 
     # Save the module in Firestore.
