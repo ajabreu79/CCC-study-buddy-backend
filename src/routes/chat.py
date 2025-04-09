@@ -1,13 +1,13 @@
 # Copyright (c) 2024.
 """Chat API routes for the Eaton Call Center system."""
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 import datetime
 import os
 import openai
 from google.cloud.firestore_v1.base_query import FieldFilter
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 from src.utils import generate_uuid, get_current_user, require_access_level
 from firebase_config import db
@@ -20,7 +20,7 @@ from src.constants import (
     STATUS_IN_PROGRESS,
     STATUS,
     VERSION,
-    SCORE,
+    CRITERIA,
     CHAT,
     STARTED_AT,
     COMPLETED_AT,
@@ -37,7 +37,6 @@ from src.constants import (
     DATA,
     MESSAGE,
     MODULE_RESOURCES,
-    RESOURCE_ID,
     FILE_URL,
     ORIGINAL_FILENAME,
     PAGE,
@@ -48,7 +47,6 @@ from src.models.chat import SendMessageModel, CreateChatModel, SourceDocumentRes
 from src.services.LangChainHelper import (
     chat_stream_with_retrieve,
     chat_with_rag,
-    format_chat_history,
 )
 
 router = APIRouter()
@@ -58,17 +56,44 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI()
 
 
-def get_openai_response(message_array: List[Dict[str, str]]):
-    """Legacy function for OpenAI responses without RAG"""
-    with client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=message_array,
-        stream=True,
-    ) as response:
-        for chunk in response:
-            if chunk.choices[0].delta.content is not None:
-                new_text = chunk.choices[0].delta.content
-                yield new_text
+def validate_message_array(
+    message_array: List[Dict[str, str]], chat_id: str, criteria: List[str], version: str
+):
+    if not isinstance(message_array, list):
+        raise ValueError("Message array must be a list")
+
+    try:
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    ROLE: USER,
+                    CONTENT: f"from the following messages, check the relevant information based on the criteria: {criteria}. The messages are: {message_array}\n\nAnd return the relevant information in a JSON format with the following keys: {criteria}. It can only be true or false.",
+                }
+            ],
+            response_format={"type": "json_object"},
+        )
+
+        # Parse the JSON response
+        json_response = response.choices[0].message.content
+
+        # Convert the JSON response to a dictionary
+        criteria_dict = {}
+        for item in criteria:
+            criteria_dict[item] = json_response.get(item, False)
+
+        # Update the chat data in Firestore
+        chat_ref = db.collection(CHAT).document(chat_id)
+        chat_doc = chat_ref.get()
+        if chat_doc.exists:
+            chat_data = chat_doc.to_dict()
+            chat_data[CHAT][str(version)][CRITERIA] = criteria_dict
+            chat_ref.set(chat_data)
+        else:
+            raise ValueError("Chat document not found")
+
+    except Exception as e:
+        print(f"Error during GPT query: {e}")
 
 
 def get_rag_response(
@@ -182,6 +207,10 @@ def create_chat(
         ON: datetime.datetime.now().isoformat(),
     }
 
+    criteria = agent_data.get(CRITERIA)
+    if criteria:
+        criteria = {k: False for k in criteria}
+
     # Prepare chat data
     if chat_data_query:
         chat_data = chat_data_query[0].to_dict()
@@ -198,7 +227,7 @@ def create_chat(
 
         # Add new conversation
         chat_data[CHAT][str(current_version)] = {
-            SCORE: 0,
+            CRITERIA: criteria,
             STATUS: STATUS_OPEN,
             STARTED_AT: initial_ts,
             COMPLETED_AT: None,
@@ -214,7 +243,7 @@ def create_chat(
             CHAT_ID: chat_id,  # Add the chat_id to the document data
             CHAT: {
                 str(current_version): {
-                    SCORE: 0,
+                    CRITERIA: criteria,
                     STATUS: STATUS_OPEN,
                     STARTED_AT: initial_ts,
                     COMPLETED_AT: None,
@@ -234,6 +263,7 @@ def create_chat(
 )
 def get_chat(
     agent_id: str,
+    criteria: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -256,21 +286,30 @@ def get_chat(
     chat_id = None
 
     if chat_data_query:
-        chat_data = chat_data_query[0].to_dict()
-        chat_id = chat_data_query[0].id
-        current_version = chat_data.get(VERSION)
-        chats = sorted(
-            chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get(ON)
-        )
-        response = {MESSAGES: chats, CHAT_ID: chat_id}
 
-    return {MESSAGE: "Chat created successfully", DATA: response}
+        if criteria:
+            # Get criteria from the first chat
+            chat_data = chat_data_query[0].to_dict()
+            current_version = chat_data.get(VERSION)
+            criteria_json = chat_data[CHAT][str(current_version)].get(CRITERIA)
+            response = {CHAT_ID: chat_data_query[0].id, CRITERIA: criteria_json}
+        else:
+            # Get chat messages
+            chat_data = chat_data_query[0].to_dict()
+            current_version = chat_data.get(VERSION)
+            chats = sorted(
+                chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get(ON)
+            )
+            response = {MESSAGES: chats, CHAT_ID: chat_data_query[0].id}
+
+    return {MESSAGE: "Chat retrieved successfully", DATA: response}
 
 
 @router.post("/message", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def send_message(
     request_data: SendMessageModel,
     current_user: dict = Depends(get_current_user),
+    background_tasks: BackgroundTasks,
 ):
     """
     Send a message to the chat with RAG-enhanced responses
@@ -346,6 +385,16 @@ def send_message(
     chat_data[CHAT][str(current_version)][STATUS] = STATUS_IN_PROGRESS
     # Update in database
     chat_ref.set(chat_data)
+
+    criteria = list(chat_data[CHAT][str(current_version)].get(CRITERIA).keys())
+
+    background_tasks.add_task(
+        validate_message_array,
+        messages + [response_message],
+        request_data.chat_id,
+        criteria,
+        current_version,
+    )
 
     return {MESSAGE: "Message sent successfully", DATA: response_message}
 
@@ -538,6 +587,7 @@ async def get_message_sources(
             )
 
     return {"chat_id": chat_id, "message_index": message_index, "sources": source_docs}
+
 
 @router.get("/list", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def list_chats(

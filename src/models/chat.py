@@ -12,7 +12,7 @@ class Message(BaseModel):
 
 class ChatVersion(BaseModel):
     version: int
-    score: Optional[float] = None
+    criteria: List[str]
     progress: Optional[float] = None
     startedAt: str = Field(default_factory=lambda: datetime.now().isoformat())
     closedAt: Optional[str] = None
