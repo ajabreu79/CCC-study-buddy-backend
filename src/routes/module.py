@@ -375,7 +375,7 @@ async def edit_training_module(
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
-        CRITERIA: criteria.join(DELIMITER),
+        CRITERIA: DELIMITER.join(criteria),
     }
 
     module_ref.update(updated_data)
