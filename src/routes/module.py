@@ -105,50 +105,37 @@ def list_modules(
         query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
 
     limited_modules_docs = query.get()
+
     filtered_modules = []
     limited_modules = []
     for doc in limited_modules_docs:
-        module = doc.to_dict()
-        module[AGENT_ID] = doc.id
-        limited_modules.append(module)
+        limited_modules.append(doc.to_dict())
 
     if limited_modules:
-        module_ids = [m[AGENT_ID] for m in limited_modules]
-        # Filter chats by both agent_id and the current user
-        chats_docs = (
-            db.collection(CHAT)
-            .where(AGENT_ID, "in", module_ids)
-            .where(
-                USER_ID, "==", current_user.get(USER_ID)
-            )  # Only filter current user's chats
-            .get()
+        # Get all modules
+        module_ids_dict = {m[AGENT_ID]: m for m in limited_modules}
+        print("1.Module IDs: ", module_ids_dict.keys())
+        # Get all chats for the current user
+        chats_query = (
+            db.collection(CHAT).where(USER_ID, "==", current_user.get(USER_ID)).get()
         )
-        chat_module_ids = {chat.to_dict()[AGENT_ID] for chat in chats_docs}
+
+        # Create set of module IDs that have chats
+        chat_module_ids = set()
+        for chat in chats_query:
+            chat_data = chat.to_dict()
+            if chat_data[AGENT_ID] in module_ids_dict:
+                chat_module_ids.add(chat_data[AGENT_ID])
+        print("2.Chat Module IDs: ", chat_module_ids)
+        # Filter out modules with existing chats
         filtered_modules = [
             m for m in limited_modules if m[AGENT_ID] not in chat_module_ids
         ]
-
-        # Query for PDF resources associated with these modules
-        if filtered_modules:
-            filtered_module_ids = [m[AGENT_ID] for m in filtered_modules]
-            resources_query = (
-                db.collection(MODULE_RESOURCES)
-                .where(filter=FieldFilter(AGENT_ID, "in", filtered_module_ids))
-                .where(filter=FieldFilter(IS_DELETED, "==", None))
-                .where(filter=FieldFilter(RESOURCE_TYPE, "==", PDF_TYPE))
-                .get()
-            )
-
-            # Create a map of module IDs to whether they have PDFs
-            modules_with_pdfs = {
-                resource.to_dict()[AGENT_ID] for resource in resources_query
-            }
-
-            # Add has_pdf flag to each module
-            for module in filtered_modules:
-                module["has_pdf"] = module[AGENT_ID] in modules_with_pdfs
-    else:
-        filtered_modules = []
+        print("3.Filtered Module IDs: ", filtered_modules)
+        # Pagination
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        filtered_modules = filtered_modules[start_index:end_index]
 
     total_count = len(filtered_modules)
 
