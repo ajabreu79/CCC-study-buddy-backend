@@ -313,8 +313,8 @@ def get_chat(
 @router.post("/message", dependencies=[Depends(require_access_level(USER_LEVEL))])
 def send_message(
     request_data: SendMessageModel,
-    current_user: dict = Depends(get_current_user),
     background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Send a message to the chat with RAG-enhanced responses
