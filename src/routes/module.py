@@ -14,6 +14,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import boto3
 from firebase_admin import firestore
+import json
 
 from src.utils import generate_uuid, get_current_user, require_access_level
 from firebase_config import db
@@ -94,7 +95,8 @@ def list_modules(
             status_code=400, detail="Page number must be greater than 0"
         )
     if page_size < 1:
-        raise HTTPException(status_code=400, detail="Page size must be greater than 0")
+        raise HTTPException(
+            status_code=400, detail="Page size must be greater than 0")
 
     query = db.collection(MODULES)
     if filter_deleted:
@@ -103,7 +105,8 @@ def list_modules(
         query = query.where(filter=FieldFilter(IS_DELETED, "==", None))
 
     if search:
-        query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
+        query = query.order_by(NAME).start_at(
+            [search]).end_at([search + "\uf8ff"])
 
     limited_modules_docs = query.get()
 
@@ -111,7 +114,11 @@ def list_modules(
     limited_modules = []
     for doc in limited_modules_docs:
         module_data = doc.to_dict()
-        module_data[CRITERIA] = list(module_data.get(CRITERIA).split(DELIMITER))
+        criteria_value = module_data.get(CRITERIA)
+        if criteria_value:
+            module_data[CRITERIA] = criteria_value.split(DELIMITER)
+        else:
+            module_data[CRITERIA] = []
         limited_modules.append(module_data)
 
     if limited_modules:
@@ -120,7 +127,8 @@ def list_modules(
 
         # Get all chats for the current user
         chats_query = (
-            db.collection(CHAT).where(USER_ID, "==", current_user.get(USER_ID)).get()
+            db.collection(CHAT).where(
+                USER_ID, "==", current_user.get(USER_ID)).get()
         )
 
         # Create set of module IDs that have chats
@@ -165,7 +173,8 @@ async def process_pdf_upload(
         pdf_file.content_type != "application/pdf"
         and not pdf_file.filename.lower().endswith(".pdf")
     ):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+        raise HTTPException(
+            status_code=400, detail="Only PDF files are allowed")
 
     # Read file content
     file_content = await pdf_file.read()
@@ -218,7 +227,8 @@ async def process_pdf_upload(
         )
     except Exception as e:
         print("Failed to upload PDF: ", str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to upload PDF: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to upload PDF: {str(e)}")
 
     # Schedule PDF processing in the background.
     from src.services.PDFProcessor import PDFProcessor
@@ -269,22 +279,41 @@ async def create_training_module(
     if not request_data.criteria:
         raise HTTPException(status_code=400, detail="Criteria cannot be empty")
 
-    if not isinstance(request_data.criteria, list):
+    # --- Modification Start ---
+    parsed_criteria = []
+    if isinstance(request_data.criteria, list) and len(request_data.criteria) == 1:
+        try:
+            # Attempt to parse the first element as JSON if it's a string
+            potential_list = json.loads(request_data.criteria[0])
+            if isinstance(potential_list, list):
+                # Ensure items are strings
+                parsed_criteria = [str(item) for item in potential_list]
+            else:
+                # It wasn't a JSON list, treat the original list as intended if items are strings
+                if all(isinstance(item, str) for item in request_data.criteria):
+                    parsed_criteria = request_data.criteria
+                else:
+                    raise HTTPException(
+                        status_code=400, detail="Criteria must be a list of strings or a single JSON string representing a list")
+
+        except (json.JSONDecodeError, TypeError):
+            # It wasn't a JSON string, treat the original list as intended if items are strings
+            if all(isinstance(item, str) for item in request_data.criteria):
+                parsed_criteria = request_data.criteria
+            else:
+                raise HTTPException(
+                    status_code=400, detail="Criteria format is invalid. Expected list of strings or a single JSON string list.")
+    elif isinstance(request_data.criteria, list) and all(isinstance(item, str) for item in request_data.criteria):
+        # It's already a list of strings
+        parsed_criteria = request_data.criteria
+    else:
         raise HTTPException(
             status_code=400, detail="Criteria must be a list of strings"
         )
 
-    criteria = []
-    for item in request_data.criteria:
-        if not isinstance(item, str):
-            raise HTTPException(
-                status_code=400, detail="Each criterion must be a string"
-            )
-        if len(item) > 100:
-            raise HTTPException(
-                status_code=400, detail="Each criterion cannot exceed 100 characters"
-            )
-        criteria.append(str(item))
+    if not parsed_criteria:
+        raise HTTPException(
+            status_code=400, detail="Criteria cannot be empty after parsing")
 
     module_data = {
         AGENT_ID: agent_id,
@@ -295,7 +324,8 @@ async def create_training_module(
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
         IS_DELETED: None,
-        CRITERIA: DELIMITER.join(criteria),
+        # Use the parsed list and DELIMITER
+        CRITERIA: DELIMITER.join(parsed_criteria),
     }
 
     # Save the module in Firestore.
@@ -303,7 +333,8 @@ async def create_training_module(
 
     response = {
         "message": "Training module created successfully.",
-        "module": module_data,
+        # Return the parsed criteria list in the response for clarity
+        "module": {**module_data, CRITERIA: parsed_criteria},
     }
 
     # If a PDF file was uploaded, process it.
@@ -313,9 +344,12 @@ async def create_training_module(
                 agent_id, pdf_file, current_user, background_tasks
             )
             response["pdf_resource"] = pdf_response
+            # Update the module in the response if pdf processing adds resource info
+            response["module"]["resources"] = [pdf_response["resource_id"]]
         except Exception as e:
+            # Consider rolling back the module creation or marking it as incomplete
             raise HTTPException(
-                status_code=500, detail=f"Failed to upload PDF: {str(e)}"
+                status_code=500, detail=f"Module created, but failed to process PDF: {str(e)}"
             )
 
     return response
@@ -344,45 +378,89 @@ async def edit_training_module(
     module_ref = db.collection(MODULES).document(agent_id)
     module_doc = module_ref.get()
     if not module_doc.exists:
-        raise HTTPException(status_code=404, detail="Training module not found")
+        raise HTTPException(
+            status_code=404, detail="Training module not found")
 
     now = datetime.datetime.utcnow()
-    # Update the module's fields as needed.
 
-    # Check the criteria
+    # --- Criteria Parsing Start ---
     if not request_data.criteria:
         raise HTTPException(status_code=400, detail="Criteria cannot be empty")
 
-    if not isinstance(request_data.criteria, list):
+    parsed_criteria = []
+    if isinstance(request_data.criteria, list) and len(request_data.criteria) == 1:
+        try:
+            # Attempt to parse the first element as JSON if it's a string
+            potential_list = json.loads(request_data.criteria[0])
+            if isinstance(potential_list, list):
+                # Ensure items are strings and validate length
+                parsed_criteria = []
+                for item in potential_list:
+                    item_str = str(item)
+                    if len(item_str) > 100:
+                        raise HTTPException(
+                            status_code=400, detail="Each criterion cannot exceed 100 characters")
+                    parsed_criteria.append(item_str)
+            else:
+                # It wasn't a JSON list, treat the original list as intended if items are strings
+                if all(isinstance(item, str) for item in request_data.criteria):
+                    parsed_criteria = []
+                    for item in request_data.criteria:
+                        if len(item) > 100:
+                            raise HTTPException(
+                                status_code=400, detail="Each criterion cannot exceed 100 characters")
+                        parsed_criteria.append(item)
+                else:
+                    raise HTTPException(
+                        status_code=400, detail="Criteria must be a list of strings or a single JSON string representing a list")
+
+        except (json.JSONDecodeError, TypeError):
+            # It wasn't a JSON string, treat the original list as intended if items are strings
+            if all(isinstance(item, str) for item in request_data.criteria):
+                parsed_criteria = []
+                for item in request_data.criteria:
+                    if len(item) > 100:
+                        raise HTTPException(
+                            status_code=400, detail="Each criterion cannot exceed 100 characters")
+                    parsed_criteria.append(item)
+            else:
+                raise HTTPException(
+                    status_code=400, detail="Criteria format is invalid. Expected list of strings or a single JSON string list.")
+
+    elif isinstance(request_data.criteria, list) and all(isinstance(item, str) for item in request_data.criteria):
+        # It's already a list of strings, validate length
+        parsed_criteria = []
+        for item in request_data.criteria:
+            if len(item) > 100:
+                raise HTTPException(
+                    status_code=400, detail="Each criterion cannot exceed 100 characters")
+            parsed_criteria.append(item)
+    else:
         raise HTTPException(
             status_code=400, detail="Criteria must be a list of strings"
         )
 
-    criteria = []
-    for item in request_data.criteria:
-        if not isinstance(item, str):
-            raise HTTPException(
-                status_code=400, detail="Each criterion must be a string"
-            )
-        if len(item) > 100:
-            raise HTTPException(
-                status_code=400, detail="Each criterion cannot exceed 100 characters"
-            )
-        criteria.append(str(item))
+    if not parsed_criteria:
+        raise HTTPException(
+            status_code=400, detail="Criteria cannot be empty after parsing")
 
     updated_data = {
         NAME: request_data.title,
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
-        CRITERIA: DELIMITER.join(criteria),
+        CRITERIA: DELIMITER.join(parsed_criteria),  # Use parsed criteria
     }
 
     module_ref.update(updated_data)
 
+    # Prepare response module data with criteria as a list
+    response_module_data = updated_data.copy()
+    response_module_data[CRITERIA] = parsed_criteria
+
     response = {
         "message": "Training module updated successfully.",
-        "module": updated_data,
+        "module": response_module_data,  # Return criteria as list
     }
 
     # If a new PDF file is provided, process it.
@@ -392,6 +470,9 @@ async def edit_training_module(
                 agent_id, pdf_file, current_user, background_tasks
             )
             response["pdf_resource"] = pdf_response
+            # Update the module in the response if pdf processing adds resource info
+            response["module"]["resources"] = firestore.ArrayUnion(
+                [pdf_response["resource_id"]])  # Add new resource ID
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload PDF: {str(e)}"
@@ -415,7 +496,8 @@ async def edit_training_module(
             resource_ids_to_remove = []
 
             for resource_doc in resources_query:
-                resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
+                resource_ref = db.collection(
+                    MODULE_RESOURCES).document(resource_doc.id)
                 resource_ids_to_remove.append(resource_doc.id)
 
                 # Soft delete the resource
@@ -442,6 +524,14 @@ async def edit_training_module(
                 # Commit all updates
                 batch.commit()
                 response["removed_pdf_count"] = len(resource_ids_to_remove)
+                # Ensure the response module reflects the removed resources
+                if "resources" in response["module"]:
+                    # Filter out removed IDs if resources were already added (e.g., from initial module load)
+                    current_resources = response["module"].get("resources", [])
+                    response["module"]["resources"] = [
+                        r for r in current_resources if r not in resource_ids_to_remove]
+                else:
+                    response["module"]["resources"] = []
 
         except Exception as e:
             raise HTTPException(
@@ -477,7 +567,8 @@ async def delete_training_module(
     module_ref = db.collection(MODULES).document(agent_id)
     module_doc = module_ref.get()
     if not module_doc.exists:
-        raise HTTPException(status_code=404, detail="Training module not found")
+        raise HTTPException(
+            status_code=404, detail="Training module not found")
 
     now = datetime.datetime.utcnow()
 
@@ -511,7 +602,8 @@ async def delete_training_module(
                     detail=f"Failed to delete file from S3 for resource {resource_doc.id}: {str(e)}",
                 )
         # Permanently delete the Firestore document for the resource.
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
+        resource_ref = db.collection(
+            MODULE_RESOURCES).document(resource_doc.id)
         batch.delete(resource_ref)
 
     # Soft delete the training module (mark as deleted).
@@ -545,7 +637,8 @@ def get_module_title(agent_id: str):
     module_ref = db.collection(MODULES).document(agent_id)
     module_doc = module_ref.get()
     if not module_doc.exists:
-        raise HTTPException(status_code=404, detail="Training module not found.")
+        raise HTTPException(
+            status_code=404, detail="Training module not found.")
 
     module_data = module_doc.to_dict()
     return {"title": module_data.get(NAME)}
@@ -573,7 +666,8 @@ async def list_module_resources(
     module_doc = module_ref.get()
 
     if not module_doc.exists:
-        raise HTTPException(status_code=404, detail="Training module not found")
+        raise HTTPException(
+            status_code=404, detail="Training module not found")
 
     # Query resources for this module
     resources_query = (
@@ -626,7 +720,8 @@ async def delete_resource(
     module_doc = module_ref.get()
 
     if not module_doc.exists:
-        raise HTTPException(status_code=404, detail="Training module not found")
+        raise HTTPException(
+            status_code=404, detail="Training module not found")
 
     # Verify resource exists and belongs to this module
     resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
