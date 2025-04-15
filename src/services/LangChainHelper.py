@@ -227,7 +227,8 @@ def chat_stream_with_retrieve(
     if not system_prompt:
         system_prompt = RAG_SYSTEM_TEMPLATE
 
-    formatted_system_prompt = system_prompt.format(context=context, question=query)
+    formatted_system_prompt = system_prompt.format(
+        context=context, question=query)
 
     # Format chat history for the model
     formatted_messages = [SystemMessage(content=formatted_system_prompt)]
@@ -259,3 +260,7 @@ def chat_stream_with_retrieve(
         for i, doc in enumerate(docs):
             source_name = doc.metadata.get("file_name", f"Document {i+1}")
             yield f"[{i+1}] {source_name}\n"
+
+    # Also yield the formatted system prompt for debugging
+    yield "\n\nRAW SYSTEM PROMPT:\n"
+    yield formatted_system_prompt
