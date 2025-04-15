@@ -120,7 +120,7 @@ def validate_message_array(
             raise ValueError("Chat document not found")
 
     except Exception as e:
-        print(f"Error during GPT query or Firestore update: {e}")
+        logging.error(f"Error during GPT query or Firestore update: {e}")
 
 
 def get_rag_response(
