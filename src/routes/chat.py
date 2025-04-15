@@ -12,6 +12,9 @@ from typing import List, Dict
 
 from src.utils import generate_uuid, get_current_user, require_access_level
 from firebase_config import db
+import boto3
+from botocore.exceptions import ClientError
+import io
 from src.constants import (
     USER_LEVEL,
     AGENT_ID,
@@ -734,3 +737,78 @@ def update_chat_status(
     chat_ref.update(update_data)
 
     return {"message": "Chat status updated successfully", "chat_id": chat_id}
+
+
+@router.get(
+    "/pdf/{module_id}",
+    dependencies=[Depends(require_access_level(USER_LEVEL))],
+)
+def get_pdf(
+    module_id: str,
+):
+    """
+    Get PDF file URL for a specific module
+    """
+    # Get module document
+    if not module_id:
+        raise HTTPException(status_code=400, detail="Module ID is required")
+
+    module_ref = db.collection(MODULE_RESOURCES)
+    module_query = module_ref.where(
+        AGENT_ID, "==", module_id).limit(1)  # Renamed for clarity
+    module_docs = module_query.get()  # Returns a list
+
+    # Check if the list is empty (no documents found)
+    if not module_docs:
+        raise HTTPException(
+            status_code=404, detail="Module resource not found")
+
+    # Access the first document in the list
+    module_doc = module_docs[0]
+    module_data = module_doc.to_dict()
+    # "module/69635bad-d343-4640-b0e2-18b2a157909c/resources/37445fb2-d008-4b6f-925f-b6121e83c2bb.pdf"
+    pdf_url = module_data.get("s3_key")
+
+    if not pdf_url:
+        raise HTTPException(status_code=404, detail="PDF URL not found")
+
+    # Get S3 client
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+        region_name=os.getenv('AWS_REGION', 'us-east-2')
+    )
+
+    # Parse the S3 key to get bucket and object key
+    try:
+        # Assuming pdf_url is in format: s3://bucket-name/key/to/object.pdf
+        if pdf_url.startswith('s3://'):
+            parts = pdf_url[5:].split('/', 1)
+            bucket_name = parts[0]
+            object_key = parts[1]
+        else:
+            # If it's just the key, use default bucket name
+            bucket_name = os.getenv('AWS_BUCKET_NAME')
+            object_key = pdf_url
+
+        # Get file from S3
+        response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+
+        # Get file content
+        file_content = response['Body'].read()
+
+        # Get filename and content type
+        filename = object_key.split('/')[-1]
+        content_type = response.get('ContentType', 'application/pdf')
+
+        # Return streaming response
+        return StreamingResponse(
+            io.BytesIO(file_content),
+            media_type=content_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except ClientError as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error retrieving file from S3: {str(e)}")

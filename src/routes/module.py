@@ -315,11 +315,6 @@ async def create_training_module(
         raise HTTPException(
             status_code=400, detail="Criteria cannot be empty after parsing")
 
-    print("criteria_parsed", parsed_criteria)
-    print('criteria_joined', DELIMITER.join(
-        parsed_criteria))  # Use DELIMITER constant
-    # --- Modification End ---
-
     module_data = {
         AGENT_ID: agent_id,
         NAME: request_data.title,
@@ -403,16 +398,18 @@ async def edit_training_module(
                 for item in potential_list:
                     item_str = str(item)
                     if len(item_str) > 100:
-                         raise HTTPException(status_code=400, detail="Each criterion cannot exceed 100 characters")
+                        raise HTTPException(
+                            status_code=400, detail="Each criterion cannot exceed 100 characters")
                     parsed_criteria.append(item_str)
             else:
                 # It wasn't a JSON list, treat the original list as intended if items are strings
                 if all(isinstance(item, str) for item in request_data.criteria):
                     parsed_criteria = []
                     for item in request_data.criteria:
-                         if len(item) > 100:
-                              raise HTTPException(status_code=400, detail="Each criterion cannot exceed 100 characters")
-                         parsed_criteria.append(item)
+                        if len(item) > 100:
+                            raise HTTPException(
+                                status_code=400, detail="Each criterion cannot exceed 100 characters")
+                        parsed_criteria.append(item)
                 else:
                     raise HTTPException(
                         status_code=400, detail="Criteria must be a list of strings or a single JSON string representing a list")
@@ -420,11 +417,12 @@ async def edit_training_module(
         except (json.JSONDecodeError, TypeError):
             # It wasn't a JSON string, treat the original list as intended if items are strings
             if all(isinstance(item, str) for item in request_data.criteria):
-                 parsed_criteria = []
-                 for item in request_data.criteria:
-                      if len(item) > 100:
-                           raise HTTPException(status_code=400, detail="Each criterion cannot exceed 100 characters")
-                      parsed_criteria.append(item)
+                parsed_criteria = []
+                for item in request_data.criteria:
+                    if len(item) > 100:
+                        raise HTTPException(
+                            status_code=400, detail="Each criterion cannot exceed 100 characters")
+                    parsed_criteria.append(item)
             else:
                 raise HTTPException(
                     status_code=400, detail="Criteria format is invalid. Expected list of strings or a single JSON string list.")
@@ -433,9 +431,10 @@ async def edit_training_module(
         # It's already a list of strings, validate length
         parsed_criteria = []
         for item in request_data.criteria:
-             if len(item) > 100:
-                  raise HTTPException(status_code=400, detail="Each criterion cannot exceed 100 characters")
-             parsed_criteria.append(item)
+            if len(item) > 100:
+                raise HTTPException(
+                    status_code=400, detail="Each criterion cannot exceed 100 characters")
+            parsed_criteria.append(item)
     else:
         raise HTTPException(
             status_code=400, detail="Criteria must be a list of strings"
@@ -444,15 +443,13 @@ async def edit_training_module(
     if not parsed_criteria:
         raise HTTPException(
             status_code=400, detail="Criteria cannot be empty after parsing")
-    # --- Criteria Parsing End ---
-
 
     updated_data = {
         NAME: request_data.title,
         SYSTEM_PROMPT: request_data.system_prompt,
         MODIFIED_AT: now,
         MODIFIED_BY: current_user[USER_ID],
-        CRITERIA: DELIMITER.join(parsed_criteria), # Use parsed criteria
+        CRITERIA: DELIMITER.join(parsed_criteria),  # Use parsed criteria
     }
 
     module_ref.update(updated_data)
@@ -463,7 +460,7 @@ async def edit_training_module(
 
     response = {
         "message": "Training module updated successfully.",
-        "module": response_module_data, # Return criteria as list
+        "module": response_module_data,  # Return criteria as list
     }
 
     # If a new PDF file is provided, process it.
@@ -474,7 +471,8 @@ async def edit_training_module(
             )
             response["pdf_resource"] = pdf_response
             # Update the module in the response if pdf processing adds resource info
-            response["module"]["resources"] = firestore.ArrayUnion([pdf_response["resource_id"]]) # Add new resource ID
+            response["module"]["resources"] = firestore.ArrayUnion(
+                [pdf_response["resource_id"]])  # Add new resource ID
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload PDF: {str(e)}"
@@ -528,12 +526,12 @@ async def edit_training_module(
                 response["removed_pdf_count"] = len(resource_ids_to_remove)
                 # Ensure the response module reflects the removed resources
                 if "resources" in response["module"]:
-                     # Filter out removed IDs if resources were already added (e.g., from initial module load)
-                     current_resources = response["module"].get("resources", [])
-                     response["module"]["resources"] = [r for r in current_resources if r not in resource_ids_to_remove]
+                    # Filter out removed IDs if resources were already added (e.g., from initial module load)
+                    current_resources = response["module"].get("resources", [])
+                    response["module"]["resources"] = [
+                        r for r in current_resources if r not in resource_ids_to_remove]
                 else:
-                     response["module"]["resources"] = []
-
+                    response["module"]["resources"] = []
 
         except Exception as e:
             raise HTTPException(
