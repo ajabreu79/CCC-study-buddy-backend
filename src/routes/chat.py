@@ -202,6 +202,9 @@ def create_chat(
     agent_data = agent_query.to_dict()
 
     initial_ts = datetime.datetime.now().isoformat()
+
+    # Use the system prompt directly as the first message (customer question)
+    # This is the prompt that was entered by the manager when creating the module
     initial_message = {
         ROLE: SYSTEM,
         CONTENT: agent_data.get(SYSTEM_PROMPT),
@@ -216,24 +219,6 @@ def create_chat(
         .limit(1)
         .get()
     )
-
-    # Get response from RAG-enhanced system
-    # Use non-streaming for this initial response
-    response_content = "".join(
-        list(
-            get_rag_response(
-                message_array=[initial_message],
-                agent_id=request_data.agent_id,
-                use_streaming=False,
-            )
-        )
-    )
-
-    response_message = {
-        ROLE: SYSTEM,
-        CONTENT: response_content,
-        ON: datetime.datetime.now().isoformat(),
-    }
 
     criteria = agent_data.get(CRITERIA)
     if criteria:
@@ -253,13 +238,13 @@ def create_chat(
         current_version += 1
         chat_data[VERSION] = current_version
 
-        # Add new conversation
+        # Add new conversation with just the initial message
         chat_data[CHAT][str(current_version)] = {
             CRITERIA: criteria,
             STATUS: STATUS_OPEN,
             STARTED_AT: initial_ts,
             COMPLETED_AT: None,
-            MESSAGES: [initial_message, response_message],
+            MESSAGES: [initial_message],  # Only include the initial message
         }
     else:
         chat_id = generate_uuid()
@@ -268,14 +253,14 @@ def create_chat(
             AGENT_ID: request_data.agent_id,
             USER_ID: current_user.get(USER_ID),
             VERSION: current_version,
-            CHAT_ID: chat_id,  # Add the chat_id to the document data
+            CHAT_ID: chat_id,
             CHAT: {
                 str(current_version): {
                     CRITERIA: criteria,
                     STATUS: STATUS_OPEN,
                     STARTED_AT: initial_ts,
                     COMPLETED_AT: None,
-                    MESSAGES: [initial_message, response_message],
+                    MESSAGES: [initial_message],  # Only include the initial message
                 }
             },
         }
