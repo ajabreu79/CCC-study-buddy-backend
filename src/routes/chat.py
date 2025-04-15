@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 import datetime
 import os
 import openai
+import json
 from google.cloud.firestore_v1.base_query import FieldFilter
 from fastapi.responses import StreamingResponse
 from typing import List, Dict
@@ -42,6 +43,7 @@ from src.constants import (
     PAGE,
     LIMIT,
     TOTAL,
+    DELIMITER,
 )
 from src.models.chat import (
     SendMessageModel,
@@ -80,12 +82,29 @@ def validate_message_array(
         )
 
         # Parse the JSON response
-        json_response = response.choices[0].message.content
+        json_response_str = response.choices[0].message.content
+        try:
+            # Attempt to parse the string as JSON
+            json_response = json.loads(json_response_str)
+            if not isinstance(json_response, dict):
+                # Handle cases where the parsed JSON is not a dictionary
+                print(
+                    f"Warning: GPT response was not a JSON object: {json_response_str}")
+                # Set default values or raise an error, depending on desired behavior
+                criteria_dict = {item: False for item in criteria}
+            else:
+                # Convert the JSON response to a dictionary
+                criteria_dict = {}
+                for item in criteria:
+                    # Use .get() safely now that json_response is a dict
+                    criteria_dict[item] = json_response.get(item, False)
 
-        # Convert the JSON response to a dictionary
-        criteria_dict = {}
-        for item in criteria:
-            criteria_dict[item] = json_response.get(item, False)
+        except json.JSONDecodeError:
+            # Handle cases where the response is not valid JSON
+            print(
+                f"Error: Could not decode JSON response from GPT: {json_response_str}")
+            # Set default values or raise an error
+            criteria_dict = {item: False for item in criteria}
 
         # Update the chat data in Firestore
         chat_ref = db.collection(CHAT).document(chat_id)
@@ -98,7 +117,7 @@ def validate_message_array(
             raise ValueError("Chat document not found")
 
     except Exception as e:
-        print(f"Error during GPT query: {e}")
+        print(f"Error during GPT query or Firestore update: {e}")
 
 
 def get_rag_response(
@@ -138,7 +157,8 @@ def get_rag_response(
 
     # Convert to format expected by LangChain
     chat_history = []
-    for msg in message_array[:-1]:  # Exclude the last message (which is the query)
+    # Exclude the last message (which is the query)
+    for msg in message_array[:-1]:
         if (
             msg.get("role") != SYSTEM
             or "system_prompt" not in msg.get("content", "").lower()
@@ -214,7 +234,7 @@ def create_chat(
 
     criteria = agent_data.get(CRITERIA)
     if criteria:
-        criteria = {k: False for k in criteria}
+        criteria = {k: False for k in criteria.split(DELIMITER)}
 
     # Prepare chat data
     if chat_data_query:
@@ -297,13 +317,15 @@ def get_chat(
             chat_data = chat_data_query[0].to_dict()
             current_version = chat_data.get(VERSION)
             criteria_json = chat_data[CHAT][str(current_version)].get(CRITERIA)
-            response = {CHAT_ID: chat_data_query[0].id, CRITERIA: criteria_json}
+            response = {
+                CHAT_ID: chat_data_query[0].id, CRITERIA: criteria_json}
         else:
             # Get chat messages
             chat_data = chat_data_query[0].to_dict()
             current_version = chat_data.get(VERSION)
             chats = sorted(
-                chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get(ON)
+                chat_data[CHAT][str(current_version)
+                                ][MESSAGES], key=lambda x: x.get(ON)
             )
             response = {MESSAGES: chats, CHAT_ID: chat_data_query[0].id}
 
@@ -366,6 +388,7 @@ def send_message(
 
                 # Extract sources
                 sources_text = response_parts[1]
+
                 source_lines = sources_text.strip().split("\n")
 
                 # Parse sources
@@ -385,8 +408,14 @@ def send_message(
         except Exception as e:
             print(f"Error extracting sources: {e}")
 
+    if "RAW SYSTEM PROMPT:" in response_content:
+        # Extract system prompt for debugging
+        system_prompt = response_content.split("RAW SYSTEM PROMPT:")[1].strip()
+        response_message["extracted_content"] = system_prompt
+
     # Update messages in chat data
-    chat_data[CHAT][str(current_version)][MESSAGES] = messages + [response_message]
+    chat_data[CHAT][str(current_version)
+                    ][MESSAGES] = messages + [response_message]
     chat_data[CHAT][str(current_version)][STATUS] = STATUS_IN_PROGRESS
     # Update in database
     chat_ref.set(chat_data)
@@ -627,7 +656,8 @@ def list_chats(
         all_messages = chat_data[CHAT][str(current_version)][MESSAGES]
         sorted_messages = sorted(all_messages, key=lambda x: x.get("on"))
         last_five_messages = (
-            sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
+            sorted_messages[-5:] if len(
+                sorted_messages) > 5 else sorted_messages
         )
         current_chat[MESSAGES] = last_five_messages
         current_chat[CHAT_ID] = chat_id
