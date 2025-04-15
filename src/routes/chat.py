@@ -92,7 +92,8 @@ def validate_message_array(
             if not isinstance(json_response, dict):
                 # Handle cases where the parsed JSON is not a dictionary
                 print(
-                    f"Warning: GPT response was not a JSON object: {json_response_str}")
+                    f"Warning: GPT response was not a JSON object: {json_response_str}"
+                )
                 # Set default values or raise an error, depending on desired behavior
                 criteria_dict = {item: False for item in criteria}
             else:
@@ -105,7 +106,8 @@ def validate_message_array(
         except json.JSONDecodeError:
             # Handle cases where the response is not valid JSON
             print(
-                f"Error: Could not decode JSON response from GPT: {json_response_str}")
+                f"Error: Could not decode JSON response from GPT: {json_response_str}"
+            )
             # Set default values or raise an error
             criteria_dict = {item: False for item in criteria}
 
@@ -115,12 +117,24 @@ def validate_message_array(
         if chat_doc.exists:
             chat_data = chat_doc.to_dict()
             chat_data[CHAT][str(version)][CRITERIA] = criteria_dict
+
+            # Check if all criteria are passing to close the chat
+            all_criteria_met = all(criteria_dict.values())
+            if all_criteria_met:
+                chat_data[CHAT][str(version)][STATUS] = STATUS_CLOSED
+                chat_data[CHAT][str(version)][
+                    COMPLETED_AT
+                ] = datetime.datetime.now().isoformat()
+                print(
+                    f"All criteria met for chat {chat_id}, version {version}. Setting status to CLOSED."
+                )
+
             chat_ref.set(chat_data)
         else:
             raise ValueError("Chat document not found")
 
     except Exception as e:
-        logging.error(f"Error during GPT query or Firestore update: {e}")
+        print(f"Error during GPT query or Firestore update: {e}")
 
 
 def get_rag_response(
@@ -305,15 +319,13 @@ def get_chat(
             chat_data = chat_data_query[0].to_dict()
             current_version = chat_data.get(VERSION)
             criteria_json = chat_data[CHAT][str(current_version)].get(CRITERIA)
-            response = {
-                CHAT_ID: chat_data_query[0].id, CRITERIA: criteria_json}
+            response = {CHAT_ID: chat_data_query[0].id, CRITERIA: criteria_json}
         else:
             # Get chat messages
             chat_data = chat_data_query[0].to_dict()
             current_version = chat_data.get(VERSION)
             chats = sorted(
-                chat_data[CHAT][str(current_version)
-                                ][MESSAGES], key=lambda x: x.get(ON)
+                chat_data[CHAT][str(current_version)][MESSAGES], key=lambda x: x.get(ON)
             )
             response = {MESSAGES: chats, CHAT_ID: chat_data_query[0].id}
 
@@ -357,6 +369,15 @@ def send_message(
         list(get_rag_response(message_array=messages, agent_id=agent_id))
     )
 
+    response_content_actual = response_content.split("\n\nRAW SYSTEM PROMPT:\n")
+    response_content = response_content_actual[0]
+    response_content_source = None
+    # If the response is too long, truncate it
+    if len(response_content_actual) > 1:
+        response_content_source = response_content_actual[1]
+    else:
+        response_content_source = None
+
     # Create response message with timestamp
     response_message = {
         ROLE: SYSTEM,
@@ -396,14 +417,11 @@ def send_message(
         except Exception as e:
             print(f"Error extracting sources: {e}")
 
-    if "RAW SYSTEM PROMPT:" in response_content:
-        # Extract system prompt for debugging
-        system_prompt = response_content.split("RAW SYSTEM PROMPT:")[1].strip()
-        response_message["extracted_content"] = system_prompt
+    if response_content_source:
+        response_message["extracted_content"] = response_content_source
 
     # Update messages in chat data
-    chat_data[CHAT][str(current_version)
-                    ][MESSAGES] = messages + [response_message]
+    chat_data[CHAT][str(current_version)][MESSAGES] = messages + [response_message]
     chat_data[CHAT][str(current_version)][STATUS] = STATUS_IN_PROGRESS
     # Update in database
     chat_ref.set(chat_data)
@@ -644,8 +662,7 @@ def list_chats(
         all_messages = chat_data[CHAT][str(current_version)][MESSAGES]
         sorted_messages = sorted(all_messages, key=lambda x: x.get("on"))
         last_five_messages = (
-            sorted_messages[-5:] if len(
-                sorted_messages) > 5 else sorted_messages
+            sorted_messages[-5:] if len(sorted_messages) > 5 else sorted_messages
         )
         current_chat[MESSAGES] = last_five_messages
         current_chat[CHAT_ID] = chat_id
@@ -739,14 +756,14 @@ def get_pdf(
         raise HTTPException(status_code=400, detail="Module ID is required")
 
     module_ref = db.collection(MODULE_RESOURCES)
-    module_query = module_ref.where(
-        AGENT_ID, "==", module_id).limit(1)  # Renamed for clarity
+    module_query = module_ref.where(AGENT_ID, "==", module_id).limit(
+        1
+    )  # Renamed for clarity
     module_docs = module_query.get()  # Returns a list
 
     # Check if the list is empty (no documents found)
     if not module_docs:
-        raise HTTPException(
-            status_code=404, detail="Module resource not found")
+        raise HTTPException(status_code=404, detail="Module resource not found")
 
     # Access the first document in the list
     module_doc = module_docs[0]
@@ -759,41 +776,42 @@ def get_pdf(
 
     # Get S3 client
     s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name=os.getenv('AWS_REGION', 'us-east-2')
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION", "us-east-2"),
     )
 
     # Parse the S3 key to get bucket and object key
     try:
         # Assuming pdf_url is in format: s3://bucket-name/key/to/object.pdf
-        if pdf_url.startswith('s3://'):
-            parts = pdf_url[5:].split('/', 1)
+        if pdf_url.startswith("s3://"):
+            parts = pdf_url[5:].split("/", 1)
             bucket_name = parts[0]
             object_key = parts[1]
         else:
             # If it's just the key, use default bucket name
-            bucket_name = os.getenv('AWS_BUCKET_NAME')
+            bucket_name = os.getenv("AWS_BUCKET_NAME")
             object_key = pdf_url
 
         # Get file from S3
         response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
 
         # Get file content
-        file_content = response['Body'].read()
+        file_content = response["Body"].read()
 
         # Get filename and content type
-        filename = object_key.split('/')[-1]
-        content_type = response.get('ContentType', 'application/pdf')
+        filename = object_key.split("/")[-1]
+        content_type = response.get("ContentType", "application/pdf")
 
         # Return streaming response
         return StreamingResponse(
             io.BytesIO(file_content),
             media_type=content_type,
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     except ClientError as e:
         raise HTTPException(
-            status_code=500, detail=f"Error retrieving file from S3: {str(e)}")
+            status_code=500, detail=f"Error retrieving file from S3: {str(e)}"
+        )

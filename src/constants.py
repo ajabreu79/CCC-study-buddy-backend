@@ -129,6 +129,7 @@ TOTAL = "total"
 USER = "user"
 MODULE = "module"
 CHAT = "chat"
+ANALYTICS = "analytics"
 
 
 OPENAI_MODEL = "gpt-4o"
