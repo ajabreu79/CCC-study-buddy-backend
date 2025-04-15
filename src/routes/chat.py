@@ -172,6 +172,8 @@ def get_rag_response(
             system_prompt = msg.get("content")
             break
 
+    print("system_prompt!!!", system_prompt)
+
     # Convert to format expected by LangChain
     chat_history = []
     # Exclude the last message (which is the query)
