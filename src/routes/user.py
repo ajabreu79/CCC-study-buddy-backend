@@ -501,3 +501,38 @@ async def update_allowed_user_access_level(
     return {
         "message": f"Access level updated for {payload.email} to {new_level} in allowed users list"
     }
+
+# -----------------------------------
+# Get Current User Info
+# -----------------------------------
+
+@router.get("/me", dependencies=[Depends(require_access_level(USER_LEVEL))])
+def get_me(current_user: dict = Depends(get_current_user)):
+    """
+    Get the email and name of the currently logged-in user.
+    """
+    user_id = current_user.get(USER_ID)
+    if not user_id:
+        # This case should ideally not happen if get_current_user works correctly
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    # Fetch user details from Firestore using USER_ID
+    user_query = (
+        db.collection(USERS)
+        .where(filter=FieldFilter(USER_ID, "==", user_id))
+        .limit(1)
+        .get()
+    )
+
+    if not user_query:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_data = user_query[0].to_dict()
+
+    return {
+        EMAIL: user_data.get(EMAIL),
+        FIRST_NAME: user_data.get(FIRST_NAME),
+        LAST_NAME: user_data.get(LAST_NAME),
+        ACCESS_LEVEL: user_data.get(ACCESS_LEVEL), # Optionally return access level too
+        USER_ID: user_data.get(USER_ID) # Optionally return user ID
+    }
