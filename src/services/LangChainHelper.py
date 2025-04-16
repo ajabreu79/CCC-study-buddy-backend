@@ -232,6 +232,8 @@ def chat_stream_with_retrieve(
     formatted_system_prompt = system_prompt.format(
         context=context, question=query)
 
+    print("formatted_system_prompt!!!", formatted_system_prompt)
+
     # Format chat history for the model
     formatted_messages = [SystemMessage(content=formatted_system_prompt)]
 
@@ -242,6 +244,8 @@ def chat_stream_with_retrieve(
 
     # Add current query
     formatted_messages.append(HumanMessage(content=query))
+
+    print("formatted_messages!!!", formatted_messages)
 
     # Initialize streaming LLM
     llm = ChatOpenAI(
