@@ -10,14 +10,12 @@ from fastapi import (
 )
 import datetime
 from typing import List, Optional
-from google.cloud.firestore_v1.base_query import FieldFilter
 import os
 import boto3
-from firebase_admin import firestore
 import json
 
 from src.utils import generate_uuid, get_current_user, require_access_level
-from firebase_config import db
+from supabase_config import table
 from src.constants import (
     MODULES,
     MODULE_RESOURCES,
@@ -94,26 +92,33 @@ def list_modules(
     if page_size < 1:
         raise HTTPException(status_code=400, detail="Page size must be greater than 0")
 
-    query = db.collection(MODULES)
-    if filter_deleted:
-        query = query.where(filter=FieldFilter(IS_DELETED, "!=", None))
-    else:
-        query = query.where(filter=FieldFilter(IS_DELETED, "==", None))
-
-    if search:
-        query = query.order_by(NAME).start_at([search]).end_at([search + "\uf8ff"])
-
-    limited_modules_docs = query.get()
+    # Fetch modules from Supabase and filter in-Python for simplicity
+    res = table(MODULES).select("*").execute()
+    limited_modules_docs = getattr(res, "data", None) or []
 
     filtered_modules = []
     limited_modules = []
-    for doc in limited_modules_docs:
-        module_data = doc.to_dict()
+    for module_data in limited_modules_docs:
+        # Respect deletion filter
+        if filter_deleted:
+            if module_data.get(IS_DELETED) is None:
+                continue
+        else:
+            if module_data.get(IS_DELETED) is not None:
+                continue
+
         criteria_value = module_data.get(CRITERIA)
         if criteria_value:
             module_data[CRITERIA] = criteria_value.split(DELIMITER)
         else:
             module_data[CRITERIA] = []
+
+        # Apply search prefix match on name if provided
+        if search:
+            name_val = module_data.get(NAME) or ""
+            if not name_val.startswith(search):
+                continue
+
         limited_modules.append(module_data)
 
     if limited_modules:
@@ -121,16 +126,14 @@ def list_modules(
         module_ids_dict = {m[AGENT_ID]: m for m in limited_modules}
 
         # Get all chats for the current user
-        chats_query = (
-            db.collection(CHAT).where(USER_ID, "==", current_user.get(USER_ID)).get()
-        )
+        chats_res = table(CHAT).select("*").eq(USER_ID, current_user.get(USER_ID)).execute()
+        chats_query = getattr(chats_res, "data", None) or []
 
         # Create set of module IDs that have chats
         chat_module_ids = set()
         for chat in chats_query:
-            chat_data = chat.to_dict()
-            if chat_data[AGENT_ID] in module_ids_dict:
-                chat_module_ids.add(chat_data[AGENT_ID])
+            if chat.get(AGENT_ID) in module_ids_dict:
+                chat_module_ids.add(chat.get(AGENT_ID))
 
         # Filter out modules with existing chats
         filtered_modules = [
@@ -200,18 +203,20 @@ async def process_pdf_upload(
         IS_DELETED: None,
     }
 
-    # Store the PDF metadata in Firestore.
-    db.collection(MODULE_RESOURCES).document(resource_id).set(resource_data)
+    # Store the PDF metadata in Supabase
+    table(MODULE_RESOURCES).insert(resource_data).execute()
 
-    # Update the module document to reference this resource.
-    module_ref = db.collection(MODULES).document(agent_id)
-    module_ref.update(
-        {
-            "resources": firestore.ArrayUnion([resource_id]),
-            MODIFIED_AT: now,
-            MODIFIED_BY: current_user[USER_ID],
-        }
-    )
+    # Update the module row to reference this resource (append to JSON array)
+    mod_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+    mod_rows = getattr(mod_res, "data", None) or []
+    if mod_rows:
+        mod = mod_rows[0]
+        resources_list = mod.get("resources") or []
+        if resource_id not in resources_list:
+            resources_list.append(resource_id)
+            table(MODULES).update(
+                {"resources": resources_list, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}
+            ).eq("id", agent_id).execute()
 
     try:
         # Upload the PDF file to S3
@@ -327,8 +332,10 @@ async def create_training_module(
         CRITERIA: DELIMITER.join(parsed_criteria),
     }
 
-    # Save the module in Firestore.
-    db.collection(MODULES).document(agent_id).set(module_data)
+    # Save the module in Supabase.
+    # Ensure `id` column matches agent_id
+    module_row = {"id": agent_id, **module_data}
+    table(MODULES).insert(module_row).execute()
 
     response = {
         "message": "Training module created successfully.",
@@ -375,10 +382,11 @@ async def edit_training_module(
     process it in the background using the shared `process_pdf_upload` function.
     If keep_existing_pdf is False and no new PDF is uploaded, delete all existing PDFs.
     """
-    module_ref = db.collection(MODULES).document(agent_id)
-    module_doc = module_ref.get()
-    if not module_doc.exists:
+    module_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+    module_rows = getattr(module_res, "data", None) or []
+    if not module_rows:
         raise HTTPException(status_code=404, detail="Training module not found")
+    module_doc = module_rows[0]
 
     now = datetime.datetime.utcnow()
 
@@ -466,7 +474,7 @@ async def edit_training_module(
         CRITERIA: DELIMITER.join(parsed_criteria),  # Use parsed criteria
     }
 
-    module_ref.update(updated_data)
+    table(MODULES).update(updated_data).eq("id", agent_id).execute()
 
     # Prepare response module data with criteria as a list
     response_module_data = updated_data.copy()
@@ -484,10 +492,13 @@ async def edit_training_module(
                 agent_id, pdf_file, current_user, background_tasks
             )
             response["pdf_resource"] = pdf_response
-            # Update the module in the response if pdf processing adds resource info
-            response["module"]["resources"] = firestore.ArrayUnion(
-                [pdf_response["resource_id"]]
-            )  # Add new resource ID
+            # Refresh module resources from Supabase (process_pdf_upload already appends)
+            mod_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+            mod_rows = getattr(mod_res, "data", None) or []
+            if mod_rows:
+                response["module"]["resources"] = mod_rows[0].get("resources", [])
+            else:
+                response["module"]["resources"] = [pdf_response["resource_id"]]
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload PDF: {str(e)}"
@@ -496,56 +507,37 @@ async def edit_training_module(
     elif not request_data.keep_existing_pdf:
         try:
             # Query all non-deleted PDF resources for this module
-            resources_query = (
-                db.collection(MODULE_RESOURCES)
-                .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
-                .where(filter=FieldFilter(IS_DELETED, "==", None))
-                .where(filter=FieldFilter(RESOURCE_TYPE, "==", PDF_TYPE))
-                .get()
+            res = (
+                table(MODULE_RESOURCES)
+                .select("*")
+                .eq(AGENT_ID, agent_id)
+                .execute()
             )
+            resources_rows = getattr(res, "data", None) or []
 
-            # Prepare a batch for efficient updates
-            batch = db.batch()
-
-            # Track resource IDs to remove from module
             resource_ids_to_remove = []
-
-            for resource_doc in resources_query:
-                resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
-                resource_ids_to_remove.append(resource_doc.id)
-
-                # Soft delete the resource
-                batch.update(
-                    resource_ref,
-                    {
-                        IS_DELETED: now,
-                        MODIFIED_AT: now,
-                        MODIFIED_BY: current_user[USER_ID],
-                    },
-                )
+            for resource in resources_rows:
+                if resource.get(IS_DELETED) is None and resource.get(RESOURCE_TYPE) == PDF_TYPE:
+                    resource_id_to_remove = resource.get("id") or resource.get(RESOURCE_ID)
+                    if resource_id_to_remove:
+                        resource_ids_to_remove.append(resource_id_to_remove)
+                        table(MODULE_RESOURCES).update(
+                            {IS_DELETED: now, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}
+                        ).eq("id", resource_id_to_remove).execute()
 
             if resource_ids_to_remove:
-                # Remove resources from module's resources array
-                batch.update(
-                    module_ref,
-                    {
-                        "resources": firestore.ArrayRemove(resource_ids_to_remove),
-                        MODIFIED_AT: now,
-                        MODIFIED_BY: current_user[USER_ID],
-                    },
-                )
-
-                # Commit all updates
-                batch.commit()
-                response["removed_pdf_count"] = len(resource_ids_to_remove)
-                # Ensure the response module reflects the removed resources
-                if "resources" in response["module"]:
-                    # Filter out removed IDs if resources were already added (e.g., from initial module load)
-                    current_resources = response["module"].get("resources", [])
-                    response["module"]["resources"] = [
-                        r for r in current_resources if r not in resource_ids_to_remove
-                    ]
+                # Remove ids from module resources JSON array
+                mod_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+                mod_rows = getattr(mod_res, "data", None) or []
+                if mod_rows:
+                    mod = mod_rows[0]
+                    current_resources = mod.get("resources") or []
+                    new_resources = [r for r in current_resources if r not in resource_ids_to_remove]
+                    table(MODULES).update({"resources": new_resources, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}).eq("id", agent_id).execute()
+                    response["removed_pdf_count"] = len(resource_ids_to_remove)
+                    response["module"]["resources"] = new_resources
                 else:
+                    response["removed_pdf_count"] = len(resource_ids_to_remove)
                     response["module"]["resources"] = []
 
         except Exception as e:
@@ -579,9 +571,9 @@ async def delete_training_module(
     - Soft deletes the training module (by updating the IS_DELETED field).
     """
     # Check if the module exists.
-    module_ref = db.collection(MODULES).document(agent_id)
-    module_doc = module_ref.get()
-    if not module_doc.exists:
+    module_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+    module_rows = getattr(module_res, "data", None) or []
+    if not module_rows:
         raise HTTPException(status_code=404, detail="Training module not found")
 
     now = datetime.datetime.utcnow()
@@ -592,45 +584,29 @@ async def delete_training_module(
     if not S3_BUCKET:
         raise HTTPException(status_code=500, detail="S3 bucket not configured")
 
-    # Query all non-deleted resources associated with this module.
-    resources_query = (
-        db.collection(MODULE_RESOURCES)
-        .where(filter=FieldFilter(AGENT_ID, "==", agent_id))
-        .where(filter=FieldFilter(IS_DELETED, "==", None))
-        .get()
-    )
+    # Query resources for this module and delete associated S3 files and DB rows
+    res = table(MODULE_RESOURCES).select("*").eq(AGENT_ID, agent_id).execute()
+    resources_rows = getattr(res, "data", None) or []
 
-    # Prepare a Firestore batch.
-    batch = db.batch()
-
-    for resource_doc in resources_query:
-        resource_data = resource_doc.to_dict()
-        s3_key = resource_data.get(S3_KEY)
-        if s3_key:
-            try:
-                # Delete the file from S3.
-                s3.delete_object(Bucket=S3_BUCKET, Key=s3_key)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to delete file from S3 for resource {resource_doc.id}: {str(e)}",
-                )
-        # Permanently delete the Firestore document for the resource.
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_doc.id)
-        batch.delete(resource_ref)
+    for resource in resources_rows:
+        if resource.get(IS_DELETED) is None:
+            resource_data = resource
+            s3_key = resource_data.get(S3_KEY)
+            resource_id_to_del = resource_data.get("id") or resource_data.get(RESOURCE_ID)
+            if s3_key:
+                try:
+                    s3.delete_object(Bucket=S3_BUCKET, Key=s3_key)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to delete file from S3 for resource {resource_id_to_del}: {str(e)}",
+                    )
+            # Permanently delete the resource row
+            if resource_id_to_del:
+                table(MODULE_RESOURCES).delete().eq("id", resource_id_to_del).execute()
 
     # Soft delete the training module (mark as deleted).
-    batch.update(
-        module_ref,
-        {
-            IS_DELETED: now,
-            MODIFIED_AT: now,
-            MODIFIED_BY: current_user[USER_ID],
-        },
-    )
-
-    # Commit the batch operations.
-    batch.commit()
+    table(MODULES).update({IS_DELETED: now, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}).eq("id", agent_id).execute()
 
     return {
         "message": f"Training module {agent_id} has been deleted. All associated resource files have been removed from S3 and their Firestore documents deleted."
@@ -647,12 +623,12 @@ def get_module_title(agent_id: str):
     """
     Get the title of a training module by its ID.
     """
-    module_ref = db.collection(MODULES).document(agent_id)
-    module_doc = module_ref.get()
-    if not module_doc.exists:
+    module_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+    module_rows = getattr(module_res, "data", None) or []
+    if not module_rows:
         raise HTTPException(status_code=404, detail="Training module not found.")
 
-    module_data = module_doc.to_dict()
+    module_data = module_rows[0]
     return {"title": module_data.get(NAME)}
 
 
@@ -727,41 +703,31 @@ async def delete_resource(
     The S3 object is not deleted immediately to allow for recovery.
     """
     # Verify module exists
-    module_ref = db.collection(MODULES).document(agent_id)
-    module_doc = module_ref.get()
+    module_res = table(MODULES).select("*").eq("id", agent_id).limit(1).execute()
+    module_rows = getattr(module_res, "data", None) or []
 
-    if not module_doc.exists:
+    if not module_rows:
         raise HTTPException(status_code=404, detail="Training module not found")
 
     # Verify resource exists and belongs to this module
-    resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
-    resource_doc = resource_ref.get()
+    resource_res = table(MODULE_RESOURCES).select("*").eq("id", resource_id).limit(1).execute()
+    resource_rows = getattr(resource_res, "data", None) or []
 
-    if not resource_doc.exists:
+    if not resource_rows:
         raise HTTPException(status_code=404, detail="Resource not found")
 
-    resource_data = resource_doc.to_dict()
+    resource_data = resource_rows[0]
     if resource_data.get(AGENT_ID) != agent_id:
-        raise HTTPException(
-            status_code=403, detail="Resource does not belong to this module"
-        )
+        raise HTTPException(status_code=403, detail="Resource does not belong to this module")
 
     now = datetime.datetime.utcnow()
 
     # Soft delete the resource
-    resource_ref.update(
-        {IS_DELETED: now, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}
-    )
+    table(MODULE_RESOURCES).update({IS_DELETED: now, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}).eq("id", resource_id).execute()
 
-    # Remove from module's resources list
-    module_ref.update(
-        {
-            "resources": firestore.ArrayRemove([resource_id]),
-            MODIFIED_AT: now,
-            MODIFIED_BY: current_user[USER_ID],
-        }
-    )
+    # Remove from module's resources list (update JSON array)
+    current_resources = module_rows[0].get("resources") or []
+    new_resources = [r for r in current_resources if r != resource_id]
+    table(MODULES).update({"resources": new_resources, MODIFIED_AT: now, MODIFIED_BY: current_user[USER_ID]}).eq("id", agent_id).execute()
 
-    return {
-        "message": f"Resource {resource_id} has been deleted from module {agent_id}"
-    }
+    return {"message": f"Resource {resource_id} has been deleted from module {agent_id}"}

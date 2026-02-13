@@ -7,7 +7,7 @@ import datetime
 from src.constants import USER_ID, ACCESS_LEVEL, EXP, USER, TOKEN, SESSIONS, CREATED_AT
 from fastapi import HTTPException, status, Request, Depends
 
-from firebase_config import db
+from supabase_config import table
 
 
 def is_valid_email(email: str) -> bool:
@@ -93,16 +93,16 @@ def get_session(user_id, token):
     - The session data if the token is valid.
     - None if no session exists or if the token has expired/doesn't match.
     """
-    session_doc = db.collection(SESSIONS).document(user_id).get()
-
-    if not session_doc.exists:
+    res = table(SESSIONS).select("*").eq("user_id", user_id).limit(1).execute()
+    rows = getattr(res, "data", None) or []
+    if not rows:
         return None
 
-    session_data = session_doc.to_dict()
+    session_data = rows[0]
     if is_token_valid(session_data, token):
         return session_data
 
-    db.collection(SESSIONS).document(user_id).delete()
+    table(SESSIONS).delete().eq("user_id", user_id).execute()
 
     return None
 
@@ -133,5 +133,6 @@ def create_session(user_id, token):
         TOKEN: token,
     }
 
-    db.collection(SESSIONS).document(user_id).set(new_session_data)
+    # Upsert the session row keyed by `user_id`
+    table(SESSIONS).upsert({"user_id": user_id, **new_session_data}).execute()
     return new_session_data
