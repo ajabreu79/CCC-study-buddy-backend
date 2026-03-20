@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 import datetime
-from google.cloud.firestore_v1.base_query import FieldFilter
-from firebase_config import db
+from supabase_config import table
 from src.utils import get_current_user, require_access_level
 from src.constants import (
     CHAT,
@@ -57,9 +56,7 @@ async def get_analytics(
 
     # --- User-level analytics (for all access levels) ---
     # Get all chats for the current user
-    user_chats_query = (
-        db.collection(CHAT).where(filter=FieldFilter(USER_ID, "==", user_id)).get()
-    )
+    user_chats_query = getattr(table(CHAT).select("*").eq(USER_ID, user_id).execute(), "data", None) or []
 
     # Process user's own data
     total_chats = len(user_chats_query)
@@ -71,7 +68,7 @@ async def get_analytics(
     passed_criteria = 0
 
     for chat in user_chats_query:
-        chat_data = chat.to_dict()
+        chat_data = chat
         current_version = chat_data.get(VERSION)
         current_chat = chat_data[CHAT][str(current_version)]
         status = current_chat.get(STATUS)
@@ -134,12 +131,10 @@ async def get_analytics(
     # --- Manager/Admin-level analytics ---
     if is_admin_or_manager:
         # Get all modules
-        all_modules_query = db.collection(MODULES).get()
-        all_modules = [doc.to_dict() for doc in all_modules_query]
+        all_modules = getattr(table(MODULES).select("*").execute(), "data", None) or []
 
         # Get all chats
-        all_chats_query = db.collection(CHAT).get()
-        all_chats = [doc.to_dict() for doc in all_chats_query]
+        all_chats = getattr(table(CHAT).select("*").execute(), "data", None) or []
 
         # Process organization-wide data
         total_org_chats = len(all_chats)

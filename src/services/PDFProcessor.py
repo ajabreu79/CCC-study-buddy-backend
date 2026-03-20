@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 
 from src.services.S3Handler import S3Handler
 from src.services.EmbeddingHandler import embed_file
-from firebase_config import db
+from supabase_config import table
 from src.constants import (
     MODULE_RESOURCES,
     PROCESSING_STATUS,
@@ -95,14 +95,13 @@ class PDFProcessor:
         Returns:
             Dict with processing results
         """
-        # Update processing status in Firestore
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
-        resource_ref.update(
+        # Update processing status in Supabase
+        table(MODULE_RESOURCES).update(
             {
                 PROCESSING_STATUS: "processing",
                 MODIFIED_AT: datetime.datetime.utcnow(),
             }
-        )
+        ).eq("id", resource_id).execute()
 
         try:
             # Create a temporary file for the PDF
@@ -160,15 +159,15 @@ class PDFProcessor:
             os.unlink(temp_file.name)
 
             if success:
-                # Update Firestore with processing complete
-                resource_ref.update(
+                # Update Supabase with processing complete
+                table(MODULE_RESOURCES).update(
                     {
                         PROCESSING_STATUS: "complete",
                         PROCESSED_AT: datetime.datetime.utcnow(),
                         CHUNK_COUNT: len(chunked_docs),
                         MODIFIED_AT: datetime.datetime.utcnow(),
                     }
-                )
+                ).eq("id", resource_id).execute()
                 return {
                     "success": True,
                     "chunk_count": len(chunked_docs),
@@ -180,14 +179,14 @@ class PDFProcessor:
 
         except Exception as e:
             print(f"Error processing PDF: {str(e)}")
-            # Update Firestore with error status
-            resource_ref.update(
+            # Update Supabase with error status
+            table(MODULE_RESOURCES).update(
                 {
                     PROCESSING_STATUS: "error",
                     ERROR_MESSAGE: str(e),
                     MODIFIED_AT: datetime.datetime.utcnow(),
                 }
-            )
+            ).eq("id", resource_id).execute()
             return {
                 "success": False,
                 "error": str(e),
@@ -204,18 +203,17 @@ class PDFProcessor:
         Returns:
             Dict with processing results
         """
-        # Get the resource data
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
-        resource_doc = resource_ref.get()
-
-        if not resource_doc.exists:
+        # Get the resource data from Supabase
+        res = table(MODULE_RESOURCES).select("*").eq("id", resource_id).limit(1).execute()
+        rows = getattr(res, "data", None) or []
+        if not rows:
             return {
                 "success": False,
                 "error": "Resource not found",
                 "resource_id": resource_id,
             }
 
-        resource_data = resource_doc.to_dict()
+        resource_data = rows[0]
         s3_key = resource_data.get("s3_key")
         agent_id = resource_data.get("agent_id")
 

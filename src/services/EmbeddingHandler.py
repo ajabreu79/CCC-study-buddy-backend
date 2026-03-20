@@ -14,7 +14,7 @@ from pinecone import Index, ServerlessSpec
 from pydantic import SecretStr
 
 from src.services.S3Handler import S3Handler
-from firebase_config import db
+from supabase_config import table
 from src.constants import (
     MODULE_RESOURCES,
     PROCESSING_STATUS,
@@ -149,14 +149,10 @@ class EmbeddingHandler:
         Returns:
             EmbeddingResult with status and metadata
         """
-        # Update processing status in Firestore
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
-        resource_ref.update(
-            {
-                PROCESSING_STATUS: "processing",
-                MODIFIED_AT: datetime.utcnow(),
-            }
-        )
+        # Update processing status in Supabase
+        table(MODULE_RESOURCES).update(
+            {"PROCESSING_STATUS": "processing", MODIFIED_AT: datetime.utcnow()}
+        ).eq("id", resource_id).execute()
 
         try:
             # Create a temporary file for the PDF
@@ -212,36 +208,36 @@ class EmbeddingHandler:
             # Clean up temp file
             os.unlink(temp_file.name)
 
-            # Update Firestore with status
+            # Update Supabase with status
             if result.success:
-                resource_ref.update(
+                table(MODULE_RESOURCES).update(
                     {
                         PROCESSING_STATUS: "complete",
                         PROCESSED_AT: datetime.utcnow(),
                         CHUNK_COUNT: result.chunk_count,
                         MODIFIED_AT: datetime.utcnow(),
                     }
-                )
+                ).eq("id", resource_id).execute()
             else:
-                resource_ref.update(
+                table(MODULE_RESOURCES).update(
                     {
                         PROCESSING_STATUS: "error",
                         ERROR_MESSAGE: result.error,
                         MODIFIED_AT: datetime.utcnow(),
                     }
-                )
+                ).eq("id", resource_id).execute()
 
             return result
 
         except Exception as e:
-            # Update Firestore with error
-            resource_ref.update(
+            # Update Supabase with error
+            table(MODULE_RESOURCES).update(
                 {
                     PROCESSING_STATUS: "error",
                     ERROR_MESSAGE: str(e),
                     MODIFIED_AT: datetime.utcnow(),
                 }
-            )
+            ).eq("id", resource_id).execute()
 
             return EmbeddingResult(success=False, error=str(e))
 
@@ -259,16 +255,13 @@ class EmbeddingHandler:
         Returns:
             EmbeddingResult with status and metadata
         """
-        # Get resource data from Firestore
-        resource_ref = db.collection(MODULE_RESOURCES).document(resource_id)
-        resource_doc = resource_ref.get()
+        # Get resource data from Supabase
+        res = table(MODULE_RESOURCES).select("*").eq("id", resource_id).limit(1).execute()
+        rows = getattr(res, "data", None) or []
+        if not rows:
+            return EmbeddingResult(success=False, error=f"Resource {resource_id} not found")
 
-        if not resource_doc.exists:
-            return EmbeddingResult(
-                success=False, error=f"Resource {resource_id} not found"
-            )
-
-        resource_data = resource_doc.to_dict()
+        resource_data = rows[0]
         s3_key = resource_data.get("s3_key")
         agent_id = resource_data.get("agent_id")
 
