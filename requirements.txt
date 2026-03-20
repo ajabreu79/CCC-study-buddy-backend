@@ -38,3 +38,5 @@ uvicorn==0.34.0
 pycryptodomex==3.19.1
 pypdf==3.7.1
 supabase
+firebase-admin
+google-cloud-firestore
